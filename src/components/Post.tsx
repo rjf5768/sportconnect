@@ -47,17 +47,8 @@ export default function Post({ post, user }: PostProps) {
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   
-  // Use local state to track likes for immediate UI feedback
-  const [localLikes, setLocalLikes] = useState(post.likes || []);
-  const [localLikeCount, setLocalLikeCount] = useState(post.likeCount || 0);
-  
-  const liked = user && localLikes.includes(user.uid);
-
-  // Update local state when post prop changes
-  useEffect(() => {
-    setLocalLikes(post.likes || []);
-    setLocalLikeCount(post.likeCount || 0);
-  }, [post.likes, post.likeCount]);
+  // Remove local state for likes - use post data directly
+  const liked = user && (post.likes || []).includes(user.uid);
 
   useEffect(() => {
     if (showComments) {
@@ -74,15 +65,6 @@ export default function Post({ post, user }: PostProps) {
   const toggleLike = async () => {
     if (!user || busy) return;
     setBusy(true);
-    
-    // Optimistic update
-    const isCurrentlyLiked = localLikes.includes(user.uid);
-    const newLikes = isCurrentlyLiked
-      ? localLikes.filter((id) => id !== user.uid)
-      : [...localLikes, user.uid];
-    
-    setLocalLikes(newLikes);
-    setLocalLikeCount(newLikes.length);
     
     try {
       await runTransaction(db, async (tx) => {
@@ -105,9 +87,6 @@ export default function Post({ post, user }: PostProps) {
       });
     } catch (error) {
       console.error('Error toggling like:', error);
-      // Revert optimistic update on error
-      setLocalLikes(post.likes || []);
-      setLocalLikeCount(post.likeCount || 0);
     } finally {
       setBusy(false);
     }
@@ -119,23 +98,32 @@ export default function Post({ post, user }: PostProps) {
     
     setSubmittingComment(true);
     try {
-      // Add the comment
-      await addDoc(collection(db, commentsCol(post.id)), {
-        text: newComment.trim(),
-        userId: user.uid,
-        userDisplayName: user.displayName || 'Anonymous',
-        createdAt: serverTimestamp(),
-      });
-      
-      // Update comment count using increment for atomic operation
-      const postRef = doc(db, postDoc(post.id));
-      await updateDoc(postRef, {
-        commentCount: increment(1)
+      // Use a transaction to ensure both operations succeed together
+      await runTransaction(db, async (tx) => {
+        // Add the comment first
+        const commentRef = doc(collection(db, commentsCol(post.id)));
+        tx.set(commentRef, {
+          text: newComment.trim(),
+          userId: user.uid,
+          userDisplayName: user.displayName || 'Anonymous',
+          createdAt: serverTimestamp(),
+        });
+        
+        // Then update the comment count
+        const postRef = doc(db, postDoc(post.id));
+        const postSnap = await tx.get(postRef);
+        if (postSnap.exists()) {
+          const currentCount = postSnap.data().commentCount || 0;
+          tx.update(postRef, {
+            commentCount: currentCount + 1
+          });
+        }
       });
       
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
+      // You might want to show an error message to the user here
     } finally {
       setSubmittingComment(false);
     }
@@ -191,7 +179,7 @@ export default function Post({ post, user }: PostProps) {
                 className={`h-6 w-6 ${liked ? 'fill-current' : ''}`} 
               />
               <span className="text-sm font-medium">
-                {localLikeCount}
+                {post.likeCount || 0}
               </span>
             </button>
             
@@ -208,10 +196,10 @@ export default function Post({ post, user }: PostProps) {
         </div>
 
         {/* Like count display */}
-        {localLikeCount > 0 && (
+        {(post.likeCount || 0) > 0 && (
           <div className="px-4 pb-2">
             <p className="text-sm font-semibold text-gray-900">
-              {localLikeCount} {localLikeCount === 1 ? 'like' : 'likes'}
+              {post.likeCount} {post.likeCount === 1 ? 'like' : 'likes'}
             </p>
           </div>
         )}
