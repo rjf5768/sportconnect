@@ -7,7 +7,9 @@ import {
   onSnapshot, 
   orderBy, 
   query,
-  serverTimestamp 
+  serverTimestamp,
+  updateDoc,
+  increment
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { postDoc, commentsCol } from '../utils/paths';
@@ -29,7 +31,17 @@ export default function Post({ post, user }: { post: any; user: any }) {
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   
-  const liked = user && post.likes?.includes(user.uid);
+  // Use local state to track likes for immediate UI feedback
+  const [localLikes, setLocalLikes] = useState(post.likes || []);
+  const [localLikeCount, setLocalLikeCount] = useState(post.likeCount || 0);
+  
+  const liked = user && localLikes.includes(user.uid);
+
+  // Update local state when post prop changes
+  useEffect(() => {
+    setLocalLikes(post.likes || []);
+    setLocalLikeCount(post.likeCount || 0);
+  }, [post.likes, post.likeCount]);
 
   useEffect(() => {
     if (showComments) {
@@ -46,6 +58,16 @@ export default function Post({ post, user }: { post: any; user: any }) {
   const toggleLike = async () => {
     if (!user || busy) return;
     setBusy(true);
+    
+    // Optimistic update
+    const isCurrentlyLiked = localLikes.includes(user.uid);
+    const newLikes = isCurrentlyLiked
+      ? localLikes.filter((id) => id !== user.uid)
+      : [...localLikes, user.uid];
+    
+    setLocalLikes(newLikes);
+    setLocalLikeCount(newLikes.length);
+    
     try {
       await runTransaction(db, async (tx) => {
         const ref = doc(db, postDoc(post.id));
@@ -67,6 +89,9 @@ export default function Post({ post, user }: { post: any; user: any }) {
       });
     } catch (error) {
       console.error('Error toggling like:', error);
+      // Revert optimistic update on error
+      setLocalLikes(post.likes || []);
+      setLocalLikeCount(post.likeCount || 0);
     } finally {
       setBusy(false);
     }
@@ -78,6 +103,7 @@ export default function Post({ post, user }: { post: any; user: any }) {
     
     setSubmittingComment(true);
     try {
+      // Add the comment
       await addDoc(collection(db, commentsCol(post.id)), {
         text: newComment.trim(),
         userId: user.uid,
@@ -85,14 +111,10 @@ export default function Post({ post, user }: { post: any; user: any }) {
         createdAt: serverTimestamp(),
       });
       
-      // Update comment count on post
-      await runTransaction(db, async (tx) => {
-        const ref = doc(db, postDoc(post.id));
-        const snap = await tx.get(ref);
-        if (snap.exists()) {
-          const currentCount = snap.data().commentCount || 0;
-          tx.update(ref, { commentCount: currentCount + 1 });
-        }
+      // Update comment count using increment for atomic operation
+      const postRef = doc(db, postDoc(post.id));
+      await updateDoc(postRef, {
+        commentCount: increment(1)
       });
       
       setNewComment('');
@@ -153,7 +175,7 @@ export default function Post({ post, user }: { post: any; user: any }) {
                 className={`h-6 w-6 ${liked ? 'fill-current' : ''}`} 
               />
               <span className="text-sm font-medium">
-                {post.likeCount || 0}
+                {localLikeCount}
               </span>
             </button>
             
@@ -170,10 +192,10 @@ export default function Post({ post, user }: { post: any; user: any }) {
         </div>
 
         {/* Like count display */}
-        {post.likeCount > 0 && (
+        {localLikeCount > 0 && (
           <div className="px-4 pb-2">
             <p className="text-sm font-semibold text-gray-900">
-              {post.likeCount} {post.likeCount === 1 ? 'like' : 'likes'}
+              {localLikeCount} {localLikeCount === 1 ? 'like' : 'likes'}
             </p>
           </div>
         )}
