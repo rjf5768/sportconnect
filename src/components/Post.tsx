@@ -10,10 +10,11 @@ import {
   serverTimestamp,
   updateDoc,
   increment,
-  writeBatch
+  writeBatch,
+  setDoc
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { postDoc, commentsCol } from '../utils/paths';
+import { postDoc, commentsCol, userDoc } from '../utils/paths';
 import { Heart, MessageCircle, Send, MoreHorizontal } from 'lucide-react';
 import Modal from './Modal';
 
@@ -69,30 +70,61 @@ export default function Post({ post, user }: PostProps) {
     
     try {
       const postRef = doc(db, postDoc(post.id));
+      const userRef = doc(db, userDoc(user.uid));
       
       await runTransaction(db, async (tx) => {
-        const snap = await tx.get(postRef);
-        if (!snap.exists()) {
+        const postSnap = await tx.get(postRef);
+        const userSnap = await tx.get(userRef);
+        
+        if (!postSnap.exists()) {
           throw new Error('Post does not exist');
         }
         
-        const data = snap.data();
-        const currentLikes: string[] = data.likes || [];
+        const postData = postSnap.data();
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        
+        const currentLikes: string[] = postData.likes || [];
+        const userLikedPosts: string[] = userData.likedPosts || [];
         const isCurrentlyLiked = currentLikes.includes(user.uid);
         
         const newLikes = isCurrentlyLiked
           ? currentLikes.filter((id) => id !== user.uid)
           : [...currentLikes, user.uid];
         
-        // Update both likes array and count atomically
+        const newUserLikedPosts = isCurrentlyLiked
+          ? userLikedPosts.filter((id) => id !== post.id)
+          : [...userLikedPosts, post.id];
+        
+        // Update post likes
         tx.update(postRef, { 
           likes: newLikes, 
           likeCount: newLikes.length 
         });
+        
+        // Update user's liked posts
+        if (userSnap.exists()) {
+          tx.update(userRef, {
+            likedPosts: newUserLikedPosts
+          });
+        } else {
+          // Create user document if it doesn't exist
+          tx.set(userRef, {
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            likedPosts: newUserLikedPosts,
+            bio: '',
+            followersCount: 0,
+            followingCount: 0,
+            postsCount: 0,
+            followers: [],
+            following: [],
+            createdAt: serverTimestamp(),
+          });
+        }
       });
     } catch (error) {
       console.error('Error toggling like:', error);
-      // You might want to show an error message to the user
     } finally {
       setBusy(false);
     }
@@ -128,7 +160,6 @@ export default function Post({ post, user }: PostProps) {
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
-      // You might want to show an error message to the user
     } finally {
       setSubmittingComment(false);
     }
