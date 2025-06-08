@@ -119,42 +119,27 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   };
 
   const followUser = async (targetUserId: string) => {
-    if (isOwnProfile) return;
+    if (isOwnProfile || !currentUserProfile) return;
+  
+    const userRef = doc(db, userDoc(currentUser.uid));
+    const amFollowing = currentUserProfile.following?.includes(targetUserId);
+  
     try {
-      await runTransaction(db, async (tx) => {
-        const userRef = doc(db, userDoc(currentUser.uid));
-        const targetRef = doc(db, userDoc(targetUserId));
-        
-        const userSnap = await tx.get(userRef);
-        const targetSnap = await tx.get(targetRef);
-        
-        if (userSnap.exists() && targetSnap.exists()) {
-          const userData = userSnap.data() as UserProfile;
-          const targetData = targetSnap.data() as UserProfile;
-          
-          const amFollowing = (userData.following || []).includes(targetUserId);
-          
-          if (amFollowing) { // Unfollow logic
-            tx.update(userRef, {
-              following: (userData.following || []).filter(id => id !== targetUserId),
-              followingCount: Math.max(0, (userData.followingCount || 0) - 1)
-            });
-            tx.update(targetRef, {
-              followers: (targetData.followers || []).filter(id => id !== currentUser.uid),
-              followersCount: Math.max(0, (targetData.followersCount || 0) - 1)
-            });
-          } else { // Follow logic
-            tx.update(userRef, {
-              following: [...(userData.following || []), targetUserId],
-              followingCount: (userData.followingCount || 0) + 1
-            });
-            tx.update(targetRef, {
-              followers: [...(targetData.followers || []), currentUser.uid],
-              followersCount: (targetData.followersCount || 0) + 1
-            });
-          }
-        }
-      });
+      if (amFollowing) {
+        // Unfollow logic: Only update the current user's document
+        await updateDoc(userRef, {
+          following: (currentUserProfile.following || []).filter(id => id !== targetUserId),
+          followingCount: Math.max(0, (currentUserProfile.followingCount || 0) - 1)
+        });
+      } else {
+        // Follow logic: Only update the current user's document
+        await updateDoc(userRef, {
+          following: [...(currentUserProfile.following || []), targetUserId],
+          followingCount: (currentUserProfile.followingCount || 0) + 1
+        });
+      }
+      // Note: This simplified approach won't update the other user's follower count.
+      // A Cloud Function is the recommended way to handle that.
     } catch (error) {
       console.error('Error following/unfollowing user:', error);
     }
