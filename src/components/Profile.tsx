@@ -6,19 +6,17 @@ import {
   orderBy, 
   onSnapshot,
   doc,
-  getDoc,
-  setDoc,
-  updateDoc,
   runTransaction,
-  serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { postsCol, userDoc } from '../utils/paths';
-import { Settings, Users, Grid, Heart } from 'lucide-react';
+import { Settings, Grid, Heart } from 'lucide-react';
 import Post from './Post';
 import Modal from './Modal';
 import LikedPosts from './LikedPosts';
 
+// This interface defines the structure for a user's profile data
 interface UserProfile {
   uid: string;
   email: string;
@@ -33,6 +31,7 @@ interface UserProfile {
   createdAt: any;
 }
 
+// This interface defines the structure for a post's data
 interface PostData {
   id: string;
   text: string;
@@ -42,117 +41,115 @@ interface PostData {
   commentCount: number;
   likes: string[];
   createdAt: any;
+  imageUrl?: string;
 }
 
-export default function Profile({ user }: { user: any }) {
+// The props for the Profile component
+interface ProfileProps {
+  currentUser: any; // The currently logged-in user from Firebase Auth
+  profileId: string;   // The UID of the profile being viewed
+}
+
+export default function Profile({ currentUser, profileId }: ProfileProps) {
   const [activeTab, setActiveTab] = useState('posts');
   const [userPosts, setUserPosts] = useState<PostData[]>([]);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [showFollowers, setShowFollowers] = useState(false);
-  const [showFollowing, setShowFollowing] = useState(false);
+  const [viewedProfile, setViewedProfile] = useState<UserProfile | null>(null);
+  const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+
   const [showSettings, setShowSettings] = useState(false);
   const [bio, setBio] = useState('');
   const [editingBio, setEditingBio] = useState(false);
+  
+  const isOwnProfile = currentUser.uid === profileId;
 
+  // Effect to listen for changes to the profile being viewed
   useEffect(() => {
-    // Load user posts
+    if (!profileId) return;
+    const docRef = doc(db, userDoc(profileId));
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data() as UserProfile;
+        setViewedProfile(data);
+        if (isOwnProfile) {
+          setBio(data.bio || '');
+        }
+      } else {
+        setViewedProfile(null); // Handle case where profile doesn't exist
+      }
+    });
+    return unsubscribe;
+  }, [profileId, isOwnProfile]);
+  
+  // Effect to listen for changes to the currently logged-in user's profile data (for follow status)
+  useEffect(() => {
+    if (!currentUser.uid) return;
+    const docRef = doc(db, userDoc(currentUser.uid));
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setCurrentUserProfile(docSnap.data() as UserProfile);
+      }
+    });
+    return unsubscribe;
+  }, [currentUser.uid]);
+
+  // Effect to load the posts of the user whose profile is being viewed
+  useEffect(() => {
+    if (!profileId) return;
     const q = query(
       collection(db, postsCol()), 
-      where('userId', '==', user.uid),
+      where('userId', '==', profileId),
       orderBy('createdAt', 'desc')
     );
     
     const unsubscribe = onSnapshot(q, (snap) => {
-      const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData));
-      setUserPosts(posts);
+      setUserPosts(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData)));
     });
 
     return unsubscribe;
-  }, [user.uid]);
-
-  // Real-time listener for user profile changes
-  useEffect(() => {
-    const docRef = doc(db, userDoc(user.uid));
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as UserProfile;
-        setUserProfile(data);
-        if (bio === '') { // Set initial bio
-          setBio(data.bio || '');
-        }
-      } else {
-        // Create profile if it doesn't exist
-        const newProfile: UserProfile = {
-          uid: user.uid,
-          email: user.email,
-          displayName: user.displayName,
-          bio: '',
-          followersCount: 0,
-          followingCount: 0,
-          postsCount: 0,
-          followers: [],
-          following: [],
-          likedPosts: [],
-          createdAt: serverTimestamp(),
-        };
-        setDoc(docRef, newProfile);
-        setUserProfile(newProfile);
-      }
-    });
-
-    return unsubscribe;
-  }, [user.uid]);
+  }, [profileId]);
 
   const updateBio = async () => {
+    if (!isOwnProfile) return;
     try {
-      await updateDoc(doc(db, userDoc(user.uid)), {
-        bio: bio.trim()
-      });
+      await updateDoc(doc(db, userDoc(currentUser.uid)), { bio: bio.trim() });
       setEditingBio(false);
-      setUserProfile((prev: UserProfile | null) => 
-        prev ? { ...prev, bio: bio.trim() } : null
-      );
     } catch (error) {
       console.error('Error updating bio:', error);
     }
   };
 
   const followUser = async (targetUserId: string) => {
+    if (isOwnProfile) return;
     try {
       await runTransaction(db, async (tx) => {
-        const userRef = doc(db, userDoc(user.uid));
+        const userRef = doc(db, userDoc(currentUser.uid));
         const targetRef = doc(db, userDoc(targetUserId));
         
         const userSnap = await tx.get(userRef);
         const targetSnap = await tx.get(targetRef);
         
         if (userSnap.exists() && targetSnap.exists()) {
-          const userData = userSnap.data();
-          const targetData = targetSnap.data();
+          const userData = userSnap.data() as UserProfile;
+          const targetData = targetSnap.data() as UserProfile;
           
-          const userFollowing: string[] = userData.following || [];
-          const targetFollowers: string[] = targetData.followers || [];
+          const amFollowing = (userData.following || []).includes(targetUserId);
           
-          const isFollowing = userFollowing.includes(targetUserId);
-          
-          if (isFollowing) {
-            // Unfollow
+          if (amFollowing) { // Unfollow logic
             tx.update(userRef, {
-              following: userFollowing.filter(id => id !== targetUserId),
+              following: (userData.following || []).filter(id => id !== targetUserId),
               followingCount: Math.max(0, (userData.followingCount || 0) - 1)
             });
             tx.update(targetRef, {
-              followers: targetFollowers.filter(id => id !== user.uid),
+              followers: (targetData.followers || []).filter(id => id !== currentUser.uid),
               followersCount: Math.max(0, (targetData.followersCount || 0) - 1)
             });
-          } else {
-            // Follow
+          } else { // Follow logic
             tx.update(userRef, {
-              following: [...userFollowing, targetUserId],
+              following: [...(userData.following || []), targetUserId],
               followingCount: (userData.followingCount || 0) + 1
             });
             tx.update(targetRef, {
-              followers: [...targetFollowers, user.uid],
+              followers: [...(targetData.followers || []), currentUser.uid],
               followersCount: (targetData.followersCount || 0) + 1
             });
           }
@@ -162,12 +159,14 @@ export default function Profile({ user }: { user: any }) {
       console.error('Error following/unfollowing user:', error);
     }
   };
-
-  const stats = [
-    { label: 'Posts', value: userPosts.length },
-    { label: 'Followers', value: userProfile?.followersCount || 0, onClick: () => setShowFollowers(true) },
-    { label: 'Following', value: userProfile?.followingCount || 0, onClick: () => setShowFollowing(true) },
-  ];
+  
+  // A loading state while the viewed profile is being fetched
+  if (!viewedProfile) {
+    return <p className="p-10 text-center">Loading profile...</p>;
+  }
+  
+  // Determine if the current user is following the viewed profile
+  const isFollowing = currentUserProfile?.following?.includes(profileId);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -176,24 +175,34 @@ export default function Profile({ user }: { user: any }) {
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center space-x-4">
             <div className="h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
-              {user.displayName?.[0]?.toUpperCase() || 'U'}
+              {viewedProfile.displayName?.[0]?.toUpperCase() || 'U'}
             </div>
             <div>
-              <h1 className="text-xl font-bold text-gray-900">{user.displayName}</h1>
-              <p className="text-gray-600">{user.email}</p>
+              <h1 className="text-xl font-bold text-gray-900">{viewedProfile.displayName}</h1>
+              <p className="text-gray-600">{viewedProfile.email}</p>
             </div>
           </div>
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 hover:bg-gray-100 rounded-full"
-          >
-            <Settings className="h-5 w-5 text-gray-600" />
-          </button>
+          {isOwnProfile ? (
+            <button onClick={() => setShowSettings(true)} className="p-2 hover:bg-gray-100 rounded-full">
+              <Settings className="h-5 w-5 text-gray-600" />
+            </button>
+          ) : (
+            <button 
+              onClick={() => followUser(profileId)}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+                isFollowing 
+                  ? 'bg-gray-200 text-gray-800 hover:bg-gray-300' 
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700'
+              }`}
+            >
+              {isFollowing ? 'Unfollow' : 'Follow'}
+            </button>
+          )}
         </div>
-
-        {/* Bio */}
+        
+        {/* Bio Section */}
         <div className="mb-4">
-          {editingBio ? (
+          {isOwnProfile && editingBio ? (
             <div className="space-y-2">
               <textarea
                 value={bio}
@@ -204,131 +213,47 @@ export default function Profile({ user }: { user: any }) {
                 maxLength={150}
               />
               <div className="flex space-x-2">
-                <button
-                  onClick={updateBio}
-                  className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
-                >
-                  Save
-                </button>
-                <button
-                  onClick={() => {
-                    setEditingBio(false);
-                    setBio(userProfile?.bio || '');
-                  }}
-                  className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
-                >
-                  Cancel
-                </button>
+                <button onClick={updateBio} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">Save</button>
+                <button onClick={() => { setEditingBio(false); setBio(viewedProfile.bio || ''); }} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300">Cancel</button>
               </div>
             </div>
           ) : (
             <div>
-              <p className="text-gray-800 mb-2">
-                {userProfile?.bio || 'No bio yet'}
-              </p>
-              <button
-                onClick={() => setEditingBio(true)}
-                className="text-indigo-600 text-sm hover:text-indigo-700"
-              >
-                {userProfile?.bio ? 'Edit bio' : 'Add bio'}
-              </button>
+              <p className="text-gray-800 mb-2">{viewedProfile.bio || 'No bio yet'}</p>
+              {isOwnProfile && <button onClick={() => setEditingBio(true)} className="text-indigo-600 text-sm hover:text-indigo-700">{viewedProfile.bio ? 'Edit bio' : 'Add bio'}</button>}
             </div>
           )}
         </div>
-
-        {/* Stats */}
+        
+        {/* Stats Section */}
         <div className="flex space-x-8">
-          {stats.map((stat) => (
-            <button
-              key={stat.label}
-              onClick={stat.onClick}
-              className={`text-center ${stat.onClick ? 'hover:text-indigo-600' : ''}`}
-            >
-              <div className="text-xl font-bold text-gray-900">{stat.value}</div>
-              <div className="text-sm text-gray-600">{stat.label}</div>
-            </button>
-          ))}
+          <div className="text-center"><div className="text-xl font-bold text-gray-900">{userPosts.length}</div><div className="text-sm text-gray-600">Posts</div></div>
+          <div className="text-center"><div className="text-xl font-bold text-gray-900">{viewedProfile.followersCount || 0}</div><div className="text-sm text-gray-600">Followers</div></div>
+          <div className="text-center"><div className="text-xl font-bold text-gray-900">{viewedProfile.followingCount || 0}</div><div className="text-sm text-gray-600">Following</div></div>
         </div>
       </div>
 
       {/* Tab Navigation */}
       <div className="flex border-b border-gray-200 mb-6">
-        <button
-          onClick={() => setActiveTab('posts')}
-          className={`flex items-center space-x-2 px-4 py-3 border-b-2 font-medium ${
-            activeTab === 'posts'
-              ? 'border-indigo-600 text-indigo-600'
-              : 'border-transparent text-gray-600 hover:text-gray-800'
-          }`}
-        >
-          <Grid className="h-5 w-5" />
-          <span>Posts</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('liked')}
-          className={`flex items-center space-x-2 px-4 py-3 border-b-2 font-medium ${
-            activeTab === 'liked'
-              ? 'border-indigo-600 text-indigo-600'
-              : 'border-transparent text-gray-600 hover:text-gray-800'
-          }`}
-        >
-          <Heart className="h-5 w-5" />
-          <span>Liked ({(userProfile?.likedPosts || []).length})</span>
-        </button>
+        <button onClick={() => setActiveTab('posts')} className={`flex items-center space-x-2 px-4 py-3 border-b-2 font-medium ${activeTab === 'posts' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-800'}`}><Grid className="h-5 w-5" /><span>Posts</span></button>
+        <button onClick={() => setActiveTab('liked')} className={`flex items-center space-x-2 px-4 py-3 border-b-2 font-medium ${activeTab === 'liked' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-gray-600 hover:text-gray-800'}`}><Heart className="h-5 w-5" /><span>Liked ({(viewedProfile.likedPosts || []).length})</span></button>
       </div>
 
-      {/* Content */}
+      {/* Tab Content */}
       {activeTab === 'posts' && (
         <div className="space-y-6">
-          {userPosts.length === 0 ? (
-            <div className="text-center py-12">
-              <Grid className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No posts yet</p>
-            </div>
-          ) : (
-            userPosts.map((post) => (
-              <Post key={post.id} post={post} user={user} />
-            ))
-          )}
+          {userPosts.length === 0 
+            ? <div className="text-center py-12"><Grid className="h-12 w-12 text-gray-400 mx-auto mb-4" /><p className="text-gray-600">This user hasn't posted yet.</p></div>
+            : userPosts.map((post) => <Post key={post.id} post={post} user={currentUser} onViewProfile={() => {}} />)
+          }
         </div>
       )}
 
-      {activeTab === 'liked' && (
-        <LikedPosts user={user} likedPostIds={userProfile?.likedPosts || []} />
-      )}
+      {activeTab === 'liked' && <LikedPosts user={currentUser} likedPostIds={viewedProfile.likedPosts || []} />}
 
-      {/* Modals */}
-      <Modal
-        isOpen={showFollowers}
-        onClose={() => setShowFollowers(false)}
-        title="Followers"
-      >
-        <div className="text-center py-8">
-          <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">Followers list coming soon!</p>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showFollowing}
-        onClose={() => setShowFollowing(false)}
-        title="Following"
-      >
-        <div className="text-center py-8">
-          <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">Following list coming soon!</p>
-        </div>
-      </Modal>
-
-      <Modal
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-        title="Settings"
-      >
-        <div className="text-center py-8">
-          <Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">Settings coming soon!</p>
-        </div>
+      {/* Settings Modal (only for own profile) */}
+      <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Settings">
+        <div className="text-center py-8"><Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" /><p className="text-gray-600">Settings coming soon!</p></div>
       </Modal>
     </div>
   );

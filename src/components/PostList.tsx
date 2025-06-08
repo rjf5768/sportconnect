@@ -4,7 +4,7 @@ import { db } from '../services/firebase';
 import { postsCol } from '../utils/paths';
 import Post from './Post';
 
-export default function PostList({ user }: { user: any }) {
+export default function PostList({ user, onViewProfile }: { user: any, onViewProfile: (uid: string) => void }) {
   const [posts, setPosts] = useState<any[]>([]);
   useEffect(() => {
     const q = query(collection(db, postsCol()), orderBy('createdAt', 'desc'));
@@ -16,7 +16,7 @@ export default function PostList({ user }: { user: any }) {
   return (
     <div className="space-y-4">
       {posts.map((p) => (
-        <Post key={p.id} post={p} user={user} />
+        <Post key={p.id} post={p} user={user} onViewProfile={onViewProfile} />
       ))}
     </div>
   );

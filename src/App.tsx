@@ -13,13 +13,22 @@ export default function App() {
   const [user, setUser] = useState<any | null>(null);
   const [ready, setReady] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
+  const [profileIdToView, setProfileIdToView] = useState<string | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
       setReady(true);
+      if (u) {
+        setProfileIdToView(u.uid); // Default to viewing own profile on login
+      }
     });
   }, []);
+
+  const handleViewProfile = (uid: string) => {
+    setProfileIdToView(uid);
+    setActiveTab('profile');
+  };
 
   if (!ready) return <p className="p-10 text-center">Loading…</p>;
 
@@ -29,6 +38,13 @@ export default function App() {
     { id: 'activity', icon: Heart, label: 'Activity' },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
+  
+  const handleNavClick = (id: string) => {
+    if (id === 'profile' && user) {
+      setProfileIdToView(user.uid);
+    }
+    setActiveTab(id);
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-purple-50 to-pink-100">
@@ -56,7 +72,7 @@ export default function App() {
             {activeTab === 'home' && (
               <>
                 <CreatePost user={user} />
-                <PostList user={user} />
+                <PostList user={user} onViewProfile={handleViewProfile} />
               </>
             )}
             {activeTab === 'search' && <Search user={user} />}
@@ -66,7 +82,9 @@ export default function App() {
                 <p className="text-gray-600">Activity feed coming soon!</p>
               </div>
             )}
-            {activeTab === 'profile' && <Profile user={user} />}
+            {activeTab === 'profile' && profileIdToView && (
+              <Profile currentUser={user} profileId={profileIdToView} />
+            )}
           </div>
         )}
       </main>
@@ -77,7 +95,7 @@ export default function App() {
             {navItems.map(({ id, icon: Icon, label }) => (
               <button
                 key={id}
-                onClick={() => setActiveTab(id)}
+                onClick={() => handleNavClick(id)}
                 className={`flex flex-col items-center space-y-1 py-2 px-3 rounded-lg transition-colors ${
                   activeTab === id
                     ? 'text-indigo-600 bg-indigo-50'

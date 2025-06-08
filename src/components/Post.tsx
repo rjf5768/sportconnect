@@ -20,6 +20,7 @@ import { postDoc, commentsCol, userDoc } from '../utils/paths';
 import { Heart, MessageCircle, Send, MoreHorizontal } from 'lucide-react';
 import Modal from './Modal';
 
+// Interface for comment data
 interface Comment {
   id: string;
   text: string;
@@ -28,6 +29,7 @@ interface Comment {
   createdAt: any;
 }
 
+// Interface for post data, including the optional imageUrl
 interface PostData {
   id: string;
   text: string;
@@ -40,12 +42,14 @@ interface PostData {
   createdAt: any;
 }
 
+// Props for the Post component, including the navigation handler
 interface PostProps {
   post: PostData;
   user: any;
+  onViewProfile: (uid: string) => void;
 }
 
-export default function Post({ post, user }: PostProps) {
+export default function Post({ post, user, onViewProfile }: PostProps) {
   const [currentPostData, setCurrentPostData] = useState(post);
   const [busy, setBusy] = useState(false);
   const [showComments, setShowComments] = useState(false);
@@ -54,21 +58,24 @@ export default function Post({ post, user }: PostProps) {
   const [submittingComment, setSubmittingComment] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   
+  // Effect to update post data if the prop changes
   useEffect(() => {
     setCurrentPostData(post);
   }, [post]);
 
   const liked = user && (currentPostData.likes || []).includes(user.uid);
 
+  // Effect to fetch comments when the comments modal is opened
   useEffect(() => {
     if (showComments) {
       const q = query(
         collection(db, commentsCol(post.id)), 
         orderBy('createdAt', 'asc')
       );
-      return onSnapshot(q, (snap) =>
+      const unsubscribe = onSnapshot(q, (snap) =>
         setComments(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Comment)))
       );
+      return unsubscribe;
     }
   }, [showComments, post.id]);
 
@@ -76,17 +83,18 @@ export default function Post({ post, user }: PostProps) {
     if (!user || busy) return;
     setBusy(true);
 
-    const originalPostState = currentPostData;
-
+    const originalPostState = { ...currentPostData };
+    
+    // Optimistic UI update
     const newLikesArray = liked
       ? (currentPostData.likes || []).filter(id => id !== user.uid)
       : [...(currentPostData.likes || []), user.uid];
 
-    setCurrentPostData({
-      ...currentPostData,
+    setCurrentPostData(prev => ({
+      ...prev,
       likes: newLikesArray,
       likeCount: newLikesArray.length,
-    });
+    }));
     
     try {
       const postRef = doc(db, postDoc(post.id));
@@ -96,9 +104,7 @@ export default function Post({ post, user }: PostProps) {
         const postSnap = await tx.get(postRef);
         const userSnap = await tx.get(userRef);
         
-        if (!postSnap.exists()) {
-          throw new Error('Post does not exist');
-        }
+        if (!postSnap.exists()) throw new Error('Post does not exist');
         
         const postDataFromDb = postSnap.data();
         const userData = userSnap.exists() ? userSnap.data() : {};
@@ -115,34 +121,18 @@ export default function Post({ post, user }: PostProps) {
           ? userLikedPosts.filter((id) => id !== post.id)
           : [...userLikedPosts, post.id];
         
-        tx.update(postRef, { 
-          likes: newLikes, 
-          likeCount: newLikes.length 
-        });
+        tx.update(postRef, { likes: newLikes, likeCount: newLikes.length });
         
         if (userSnap.exists()) {
-          tx.update(userRef, {
-            likedPosts: newUserLikedPosts
-          });
+          tx.update(userRef, { likedPosts: newUserLikedPosts });
         } else {
-          tx.set(userRef, {
-            uid: user.uid,
-            email: user.email,
-            displayName: user.displayName,
-            likedPosts: newUserLikedPosts,
-            bio: '',
-            followersCount: 0,
-            followingCount: 0,
-            postsCount: 0,
-            followers: [],
-            following: [],
-            createdAt: serverTimestamp(),
-          });
+          // This case can happen if the user document was deleted, but they can still like things.
+          // Depending on desired behavior, you might create a new user doc here.
         }
       });
     } catch (error) {
       console.error('Error toggling like:', error);
-      setCurrentPostData(originalPostState);
+      setCurrentPostData(originalPostState); // Revert on error
     } finally {
       setBusy(false);
     }
@@ -165,12 +155,9 @@ export default function Post({ post, user }: PostProps) {
       });
       
       const postRef = doc(db, postDoc(post.id));
-      batch.update(postRef, {
-        commentCount: increment(1)
-      });
+      batch.update(postRef, { commentCount: increment(1) });
       
       await batch.commit();
-      
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -194,13 +181,16 @@ export default function Post({ post, user }: PostProps) {
         
         const batch = writeBatch(db);
   
+        // Delete all comments in the subcollection
         commentsSnap.forEach(commentDoc => {
           batch.delete(commentDoc.ref);
         });
   
+        // Delete the post itself
         batch.delete(postRef);
   
         await batch.commit();
+        // The onSnapshot listener in PostList will handle removing the post from the UI
       } catch (error) {
         console.error("Error deleting post:", error);
         alert("There was an error deleting the post.");
@@ -225,13 +215,19 @@ export default function Post({ post, user }: PostProps) {
   return (
     <>
       <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden mb-6">
+        {/* Post Header */}
         <div className="flex items-center justify-between p-4 pb-2">
           <div className="flex items-center space-x-3">
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
               {currentPostData.userDisplayName?.[0]?.toUpperCase() || 'U'}
             </div>
             <div>
-              <p className="font-semibold text-gray-900">{currentPostData.userDisplayName}</p>
+              <p
+                className="font-semibold text-gray-900 cursor-pointer hover:underline"
+                onClick={() => onViewProfile(post.userId)}
+              >
+                {currentPostData.userDisplayName}
+              </p>
               <p className="text-xs text-gray-500">{formatTimeAgo(currentPostData.createdAt)}</p>
             </div>
           </div>
@@ -259,19 +255,21 @@ export default function Post({ post, user }: PostProps) {
           </div>
         </div>
 
+        {/* Post Image */}
         {currentPostData.imageUrl && (
             <div className="my-2">
                 <img src={currentPostData.imageUrl} alt="Post content" className="w-full max-h-96 object-cover" />
             </div>
         )}
 
+        {/* Post Text */}
         {currentPostData.text &&
             <div className="px-4 pb-3">
               <p className="text-gray-900 whitespace-pre-wrap leading-relaxed">{currentPostData.text}</p>
             </div>
         }
 
-
+        {/* Action Buttons */}
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-50">
           <div className="flex items-center space-x-6">
             <button
@@ -301,6 +299,7 @@ export default function Post({ post, user }: PostProps) {
           </div>
         </div>
 
+        {/* Like Count */}
         {(currentPostData.likeCount || 0) > 0 && (
           <div className="px-4 pb-2">
             <p className="text-sm font-semibold text-gray-900">
@@ -310,6 +309,7 @@ export default function Post({ post, user }: PostProps) {
         )}
       </div>
 
+      {/* Comments Modal */}
       <Modal 
         isOpen={showComments} 
         onClose={() => setShowComments(false)}
@@ -342,6 +342,7 @@ export default function Post({ post, user }: PostProps) {
           )}
         </div>
 
+        {/* Add Comment Form */}
         <form onSubmit={addComment} className="flex space-x-3 border-t pt-4">
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
             {user.displayName?.[0]?.toUpperCase() || 'U'}
