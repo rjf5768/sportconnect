@@ -9,7 +9,8 @@ import {
   query,
   serverTimestamp,
   updateDoc,
-  increment
+  increment,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { postDoc, commentsCol } from '../utils/paths';
@@ -47,7 +48,7 @@ export default function Post({ post, user }: PostProps) {
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   
-  // Remove local state for likes - use post data directly
+  // Use post data directly for likes
   const liked = user && (post.likes || []).includes(user.uid);
 
   useEffect(() => {
@@ -67,10 +68,13 @@ export default function Post({ post, user }: PostProps) {
     setBusy(true);
     
     try {
+      const postRef = doc(db, postDoc(post.id));
+      
       await runTransaction(db, async (tx) => {
-        const ref = doc(db, postDoc(post.id));
-        const snap = await tx.get(ref);
-        if (!snap.exists()) return;
+        const snap = await tx.get(postRef);
+        if (!snap.exists()) {
+          throw new Error('Post does not exist');
+        }
         
         const data = snap.data();
         const currentLikes: string[] = data.likes || [];
@@ -80,13 +84,15 @@ export default function Post({ post, user }: PostProps) {
           ? currentLikes.filter((id) => id !== user.uid)
           : [...currentLikes, user.uid];
         
-        tx.update(ref, { 
+        // Update both likes array and count atomically
+        tx.update(postRef, { 
           likes: newLikes, 
           likeCount: newLikes.length 
         });
       });
     } catch (error) {
       console.error('Error toggling like:', error);
+      // You might want to show an error message to the user
     } finally {
       setBusy(false);
     }
@@ -98,32 +104,31 @@ export default function Post({ post, user }: PostProps) {
     
     setSubmittingComment(true);
     try {
-      // Use a transaction to ensure both operations succeed together
-      await runTransaction(db, async (tx) => {
-        // Add the comment first
-        const commentRef = doc(collection(db, commentsCol(post.id)));
-        tx.set(commentRef, {
-          text: newComment.trim(),
-          userId: user.uid,
-          userDisplayName: user.displayName || 'Anonymous',
-          createdAt: serverTimestamp(),
-        });
-        
-        // Then update the comment count
-        const postRef = doc(db, postDoc(post.id));
-        const postSnap = await tx.get(postRef);
-        if (postSnap.exists()) {
-          const currentCount = postSnap.data().commentCount || 0;
-          tx.update(postRef, {
-            commentCount: currentCount + 1
-          });
-        }
+      // Use a batch write to ensure atomicity
+      const batch = writeBatch(db);
+      
+      // Add the comment
+      const commentRef = doc(collection(db, commentsCol(post.id)));
+      batch.set(commentRef, {
+        text: newComment.trim(),
+        userId: user.uid,
+        userDisplayName: user.displayName || 'Anonymous',
+        createdAt: serverTimestamp(),
       });
+      
+      // Update the comment count
+      const postRef = doc(db, postDoc(post.id));
+      batch.update(postRef, {
+        commentCount: increment(1)
+      });
+      
+      // Commit the batch
+      await batch.commit();
       
       setNewComment('');
     } catch (error) {
       console.error('Error adding comment:', error);
-      // You might want to show an error message to the user here
+      // You might want to show an error message to the user
     } finally {
       setSubmittingComment(false);
     }
@@ -173,7 +178,7 @@ export default function Post({ post, user }: PostProps) {
               disabled={busy}
               className={`flex items-center space-x-2 transition-colors ${
                 liked ? 'text-red-500' : 'text-gray-600 hover:text-red-500'
-              }`}
+              } ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Heart 
                 className={`h-6 w-6 ${liked ? 'fill-current' : ''}`} 
@@ -250,6 +255,7 @@ export default function Post({ post, user }: PostProps) {
               onChange={(e) => setNewComment(e.target.value)}
               placeholder="Add a comment..."
               className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              disabled={submittingComment}
             />
             <button
               type="submit"
