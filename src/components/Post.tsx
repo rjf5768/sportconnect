@@ -43,14 +43,18 @@ interface PostProps {
 }
 
 export default function Post({ post, user }: PostProps) {
+  const [currentPostData, setCurrentPostData] = useState(post);
   const [busy, setBusy] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   
-  // Use post data directly for likes
-  const liked = user && (post.likes || []).includes(user.uid);
+  useEffect(() => {
+    setCurrentPostData(post);
+  }, [post]);
+
+  const liked = user && (currentPostData.likes || []).includes(user.uid);
 
   useEffect(() => {
     if (showComments) {
@@ -67,6 +71,19 @@ export default function Post({ post, user }: PostProps) {
   const toggleLike = async () => {
     if (!user || busy) return;
     setBusy(true);
+
+    const originalPostState = currentPostData;
+
+    // Optimistic UI update
+    const newLikesArray = liked
+      ? (currentPostData.likes || []).filter(id => id !== user.uid)
+      : [...(currentPostData.likes || []), user.uid];
+
+    setCurrentPostData({
+      ...currentPostData,
+      likes: newLikesArray,
+      likeCount: newLikesArray.length,
+    });
     
     try {
       const postRef = doc(db, postDoc(post.id));
@@ -80,10 +97,10 @@ export default function Post({ post, user }: PostProps) {
           throw new Error('Post does not exist');
         }
         
-        const postData = postSnap.data();
+        const postDataFromDb = postSnap.data();
         const userData = userSnap.exists() ? userSnap.data() : {};
         
-        const currentLikes: string[] = postData.likes || [];
+        const currentLikes: string[] = postDataFromDb.likes || [];
         const userLikedPosts: string[] = userData.likedPosts || [];
         const isCurrentlyLiked = currentLikes.includes(user.uid);
         
@@ -125,6 +142,7 @@ export default function Post({ post, user }: PostProps) {
       });
     } catch (error) {
       console.error('Error toggling like:', error);
+      setCurrentPostData(originalPostState);
     } finally {
       setBusy(false);
     }
@@ -184,11 +202,11 @@ export default function Post({ post, user }: PostProps) {
         <div className="flex items-center justify-between p-4 pb-2">
           <div className="flex items-center space-x-3">
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-              {post.userDisplayName?.[0]?.toUpperCase() || 'U'}
+              {currentPostData.userDisplayName?.[0]?.toUpperCase() || 'U'}
             </div>
             <div>
-              <p className="font-semibold text-gray-900">{post.userDisplayName}</p>
-              <p className="text-xs text-gray-500">{formatTimeAgo(post.createdAt)}</p>
+              <p className="font-semibold text-gray-900">{currentPostData.userDisplayName}</p>
+              <p className="text-xs text-gray-500">{formatTimeAgo(currentPostData.createdAt)}</p>
             </div>
           </div>
           <button className="p-2 hover:bg-gray-50 rounded-full">
@@ -198,7 +216,7 @@ export default function Post({ post, user }: PostProps) {
 
         {/* Post Content */}
         <div className="px-4 pb-3">
-          <p className="text-gray-900 whitespace-pre-wrap leading-relaxed">{post.text}</p>
+          <p className="text-gray-900 whitespace-pre-wrap leading-relaxed">{currentPostData.text}</p>
         </div>
 
         {/* Action Buttons */}
@@ -215,7 +233,7 @@ export default function Post({ post, user }: PostProps) {
                 className={`h-6 w-6 ${liked ? 'fill-current' : ''}`} 
               />
               <span className="text-sm font-medium">
-                {post.likeCount || 0}
+                {currentPostData.likeCount || 0}
               </span>
             </button>
             
@@ -225,17 +243,17 @@ export default function Post({ post, user }: PostProps) {
             >
               <MessageCircle className="h-6 w-6" />
               <span className="text-sm font-medium">
-                {post.commentCount || 0}
+                {currentPostData.commentCount || 0}
               </span>
             </button>
           </div>
         </div>
 
         {/* Like count display */}
-        {(post.likeCount || 0) > 0 && (
+        {(currentPostData.likeCount || 0) > 0 && (
           <div className="px-4 pb-2">
             <p className="text-sm font-semibold text-gray-900">
-              {post.likeCount} {post.likeCount === 1 ? 'like' : 'likes'}
+              {currentPostData.likeCount} {currentPostData.likeCount === 1 ? 'like' : 'likes'}
             </p>
           </div>
         )}
