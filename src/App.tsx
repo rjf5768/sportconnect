@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState } from 'react';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { auth } from './services/firebase';
@@ -7,7 +6,7 @@ import CreatePost from './components/CreatePost';
 import PostList from './components/PostList';
 import Profile from './components/Profile';
 import Search from './components/Search';
-import { Home, Search as SearchIcon, PlusSquare, Heart, User } from 'lucide-react';
+import { Home, Search as SearchIcon, Heart, User } from 'lucide-react';
 import './styles/index.css';
 
 export default function App() {
@@ -27,7 +26,6 @@ export default function App() {
   const navItems = [
     { id: 'home', icon: Home, label: 'Home' },
     { id: 'search', icon: SearchIcon, label: 'Search' },
-    { id: 'create', icon: PlusSquare, label: 'Create' },
     { id: 'activity', icon: Heart, label: 'Activity' },
     { id: 'profile', icon: User, label: 'Profile' },
   ];
@@ -62,7 +60,6 @@ export default function App() {
               </>
             )}
             {activeTab === 'search' && <Search user={user} />}
-            {activeTab === 'create' && <CreatePost user={user} standalone />}
             {activeTab === 'activity' && (
               <div className="text-center py-20">
                 <Heart className="mx-auto mb-4 h-12 w-12 text-gray-400" />

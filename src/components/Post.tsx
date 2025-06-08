@@ -11,7 +11,9 @@ import {
   updateDoc,
   increment,
   writeBatch,
-  setDoc
+  setDoc,
+  deleteDoc,
+  getDocs,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { postDoc, commentsCol, userDoc } from '../utils/paths';
@@ -29,6 +31,7 @@ interface Comment {
 interface PostData {
   id: string;
   text: string;
+  imageUrl?: string;
   userId: string;
   userDisplayName: string;
   likeCount: number;
@@ -49,6 +52,7 @@ export default function Post({ post, user }: PostProps) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   
   useEffect(() => {
     setCurrentPostData(post);
@@ -74,7 +78,6 @@ export default function Post({ post, user }: PostProps) {
 
     const originalPostState = currentPostData;
 
-    // Optimistic UI update
     const newLikesArray = liked
       ? (currentPostData.likes || []).filter(id => id !== user.uid)
       : [...(currentPostData.likes || []), user.uid];
@@ -112,19 +115,16 @@ export default function Post({ post, user }: PostProps) {
           ? userLikedPosts.filter((id) => id !== post.id)
           : [...userLikedPosts, post.id];
         
-        // Update post likes
         tx.update(postRef, { 
           likes: newLikes, 
           likeCount: newLikes.length 
         });
         
-        // Update user's liked posts
         if (userSnap.exists()) {
           tx.update(userRef, {
             likedPosts: newUserLikedPosts
           });
         } else {
-          // Create user document if it doesn't exist
           tx.set(userRef, {
             uid: user.uid,
             email: user.email,
@@ -154,10 +154,8 @@ export default function Post({ post, user }: PostProps) {
     
     setSubmittingComment(true);
     try {
-      // Use a batch write to ensure atomicity
       const batch = writeBatch(db);
       
-      // Add the comment
       const commentRef = doc(collection(db, commentsCol(post.id)));
       batch.set(commentRef, {
         text: newComment.trim(),
@@ -166,13 +164,11 @@ export default function Post({ post, user }: PostProps) {
         createdAt: serverTimestamp(),
       });
       
-      // Update the comment count
       const postRef = doc(db, postDoc(post.id));
       batch.update(postRef, {
         commentCount: increment(1)
       });
       
-      // Commit the batch
       await batch.commit();
       
       setNewComment('');
@@ -180,6 +176,37 @@ export default function Post({ post, user }: PostProps) {
       console.error('Error adding comment:', error);
     } finally {
       setSubmittingComment(false);
+    }
+  };
+
+  const deletePost = async () => {
+    if (user?.uid !== post.userId) {
+      alert("You can only delete your own posts.");
+      return;
+    }
+  
+    if (window.confirm('Are you sure you want to delete this post? This cannot be undone.')) {
+      setBusy(true);
+      try {
+        const postRef = doc(db, postDoc(post.id));
+        const commentsQuery = query(collection(db, commentsCol(post.id)));
+        const commentsSnap = await getDocs(commentsQuery);
+        
+        const batch = writeBatch(db);
+  
+        commentsSnap.forEach(commentDoc => {
+          batch.delete(commentDoc.ref);
+        });
+  
+        batch.delete(postRef);
+  
+        await batch.commit();
+      } catch (error) {
+        console.error("Error deleting post:", error);
+        alert("There was an error deleting the post.");
+      } finally {
+        setBusy(false);
+      }
     }
   };
 
@@ -198,7 +225,6 @@ export default function Post({ post, user }: PostProps) {
   return (
     <>
       <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden mb-6">
-        {/* Post Header */}
         <div className="flex items-center justify-between p-4 pb-2">
           <div className="flex items-center space-x-3">
             <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
@@ -209,17 +235,43 @@ export default function Post({ post, user }: PostProps) {
               <p className="text-xs text-gray-500">{formatTimeAgo(currentPostData.createdAt)}</p>
             </div>
           </div>
-          <button className="p-2 hover:bg-gray-50 rounded-full">
-            <MoreHorizontal className="h-5 w-5 text-gray-400" />
-          </button>
+          <div className="relative">
+            {user?.uid === post.userId && (
+              <button
+                onClick={() => setShowOptions(!showOptions)}
+                onBlur={() => setTimeout(() => setShowOptions(false), 200)}
+                className="p-2 hover:bg-gray-50 rounded-full"
+              >
+                <MoreHorizontal className="h-5 w-5 text-gray-400" />
+              </button>
+            )}
+            {showOptions && (
+              <div className="absolute right-0 mt-2 w-32 bg-white rounded-md shadow-lg z-10 border">
+                <button
+                  onClick={deletePost}
+                  disabled={busy}
+                  className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 disabled:opacity-50"
+                >
+                  Delete Post
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Post Content */}
-        <div className="px-4 pb-3">
-          <p className="text-gray-900 whitespace-pre-wrap leading-relaxed">{currentPostData.text}</p>
-        </div>
+        {currentPostData.imageUrl && (
+            <div className="my-2">
+                <img src={currentPostData.imageUrl} alt="Post content" className="w-full max-h-96 object-cover" />
+            </div>
+        )}
 
-        {/* Action Buttons */}
+        {currentPostData.text &&
+            <div className="px-4 pb-3">
+              <p className="text-gray-900 whitespace-pre-wrap leading-relaxed">{currentPostData.text}</p>
+            </div>
+        }
+
+
         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-50">
           <div className="flex items-center space-x-6">
             <button
@@ -249,7 +301,6 @@ export default function Post({ post, user }: PostProps) {
           </div>
         </div>
 
-        {/* Like count display */}
         {(currentPostData.likeCount || 0) > 0 && (
           <div className="px-4 pb-2">
             <p className="text-sm font-semibold text-gray-900">
@@ -259,7 +310,6 @@ export default function Post({ post, user }: PostProps) {
         )}
       </div>
 
-      {/* Comments Modal */}
       <Modal 
         isOpen={showComments} 
         onClose={() => setShowComments(false)}
@@ -292,7 +342,6 @@ export default function Post({ post, user }: PostProps) {
           )}
         </div>
 
-        {/* Add Comment Form */}
         <form onSubmit={addComment} className="flex space-x-3 border-t pt-4">
           <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
             {user.displayName?.[0]?.toUpperCase() || 'U'}
