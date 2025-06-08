@@ -12,10 +12,30 @@ import { db } from '../services/firebase';
 import { usersCol, postsCol } from '../utils/paths';
 import { Search as SearchIcon, TrendingUp, Users, Hash } from 'lucide-react';
 
+interface UserData {
+  id: string;
+  uid: string;
+  displayName: string;
+  email: string;
+  bio?: string;
+  followersCount?: number;
+}
+
+interface PostData {
+  id: string;
+  text: string;
+  userId: string;
+  userDisplayName: string;
+  likeCount: number;
+  commentCount: number;
+  likes: string[];
+  createdAt: any;
+}
+
 export default function Search({ user }: { user: any }) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [recentPosts, setRecentPosts] = useState<any[]>([]);
+  const [searchResults, setSearchResults] = useState<UserData[]>([]);
+  const [recentPosts, setRecentPosts] = useState<PostData[]>([]);
   const [trendingTopics] = useState([
     'Football', 'Basketball', 'Soccer', 'Tennis', 'Baseball', 'Hockey'
   ]);
@@ -30,7 +50,7 @@ export default function Search({ user }: { user: any }) {
     );
     
     return onSnapshot(q, (snap) => {
-      setRecentPosts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setRecentPosts(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData)));
     });
   }, []);
 
@@ -40,7 +60,7 @@ export default function Search({ user }: { user: any }) {
     } else {
       setSearchResults([]);
     }
-  }, [searchTerm]);
+  }, [searchTerm, user.uid]);
 
   const searchUsers = async () => {
     try {
@@ -48,7 +68,7 @@ export default function Search({ user }: { user: any }) {
       const querySnapshot = await getDocs(q);
       
       const users = querySnapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .map(doc => ({ id: doc.id, ...doc.data() } as UserData))
         .filter(userData => 
           userData.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
           userData.email?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -61,7 +81,7 @@ export default function Search({ user }: { user: any }) {
     }
   };
 
-  const formatTimeAgo = (timestamp: any) => {
+  const formatTimeAgo = (timestamp: any): string => {
     if (!timestamp) return '';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     const now = new Date();

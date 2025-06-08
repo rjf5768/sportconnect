@@ -18,10 +18,34 @@ import { Settings, Users, Grid, Heart } from 'lucide-react';
 import Post from './Post';
 import Modal from './Modal';
 
+interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  bio?: string;
+  followersCount: number;
+  followingCount: number;
+  postsCount: number;
+  followers: string[];
+  following: string[];
+  createdAt: any;
+}
+
+interface PostData {
+  id: string;
+  text: string;
+  userId: string;
+  userDisplayName: string;
+  likeCount: number;
+  commentCount: number;
+  likes: string[];
+  createdAt: any;
+}
+
 export default function Profile({ user }: { user: any }) {
   const [activeTab, setActiveTab] = useState('posts');
-  const [userPosts, setUserPosts] = useState<any[]>([]);
-  const [userProfile, setUserProfile] = useState<any>(null);
+  const [userPosts, setUserPosts] = useState<PostData[]>([]);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [followers, setFollowers] = useState<any[]>([]);
   const [following, setFollowing] = useState<any[]>([]);
   const [showFollowers, setShowFollowers] = useState(false);
@@ -36,12 +60,12 @@ export default function Profile({ user }: { user: any }) {
       const docRef = doc(db, userDoc(user.uid));
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        const data = docSnap.data();
+        const data = docSnap.data() as UserProfile;
         setUserProfile(data);
         setBio(data.bio || '');
       } else {
         // Create profile if it doesn't exist
-        const newProfile = {
+        const newProfile: UserProfile = {
           uid: user.uid,
           email: user.email,
           displayName: user.displayName,
@@ -68,7 +92,7 @@ export default function Profile({ user }: { user: any }) {
     );
     
     const unsubscribe = onSnapshot(q, (snap) => {
-      const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData));
       setUserPosts(posts);
       
       // Update posts count
@@ -78,7 +102,7 @@ export default function Profile({ user }: { user: any }) {
     });
 
     return unsubscribe;
-  }, [user.uid]);
+  }, [user.uid, user.email, user.displayName]);
 
   const updateBio = async () => {
     try {
@@ -86,7 +110,9 @@ export default function Profile({ user }: { user: any }) {
         bio: bio.trim()
       });
       setEditingBio(false);
-      setUserProfile(prev => ({ ...prev, bio: bio.trim() }));
+      setUserProfile((prev: UserProfile | null) => 
+        prev ? { ...prev, bio: bio.trim() } : null
+      );
     } catch (error) {
       console.error('Error updating bio:', error);
     }
@@ -105,8 +131,8 @@ export default function Profile({ user }: { user: any }) {
           const userData = userSnap.data();
           const targetData = targetSnap.data();
           
-          const userFollowing = userData.following || [];
-          const targetFollowers = targetData.followers || [];
+          const userFollowing: string[] = userData.following || [];
+          const targetFollowers: string[] = targetData.followers || [];
           
           const isFollowing = userFollowing.includes(targetUserId);
           
