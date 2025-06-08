@@ -24,7 +24,23 @@ interface Comment {
   createdAt: any;
 }
 
-export default function Post({ post, user }: { post: any; user: any }) {
+interface PostData {
+  id: string;
+  text: string;
+  userId: string;
+  userDisplayName: string;
+  likeCount: number;
+  commentCount: number;
+  likes: string[];
+  createdAt: any;
+}
+
+interface PostProps {
+  post: PostData;
+  user: any;
+}
+
+export default function Post({ post, user }: PostProps) {
   const [busy, setBusy] = useState(false);
   const [showComments, setShowComments] = useState(false);
   const [comments, setComments] = useState<Comment[]>([]);
