@@ -11,14 +11,13 @@ import {
   updateDoc,
   runTransaction,
   serverTimestamp,
-  getDocs,
-  documentId
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { postsCol, userDoc, usersCol } from '../utils/paths';
+import { postsCol, userDoc } from '../utils/paths';
 import { Settings, Users, Grid, Heart } from 'lucide-react';
 import Post from './Post';
 import Modal from './Modal';
+import LikedPosts from './LikedPosts';
 
 interface UserProfile {
   uid: string;
@@ -48,30 +47,38 @@ interface PostData {
 export default function Profile({ user }: { user: any }) {
   const [activeTab, setActiveTab] = useState('posts');
   const [userPosts, setUserPosts] = useState<PostData[]>([]);
-  const [likedPosts, setLikedPosts] = useState<PostData[]>([]);
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [followers, setFollowers] = useState<any[]>([]);
-  const [following, setFollowing] = useState<any[]>([]);
   const [showFollowers, setShowFollowers] = useState(false);
   const [showFollowing, setShowFollowing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [bio, setBio] = useState('');
   const [editingBio, setEditingBio] = useState(false);
-  const [loadingLikedPosts, setLoadingLikedPosts] = useState(false);
 
   useEffect(() => {
-    // Load user profile
-    const loadProfile = async () => {
-      const docRef = doc(db, userDoc(user.uid));
-      const docSnap = await getDoc(docRef);
+    // Load user posts
+    const q = query(
+      collection(db, postsCol()), 
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const unsubscribe = onSnapshot(q, (snap) => {
+      const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData));
+      setUserPosts(posts);
+    });
+
+    return unsubscribe;
+  }, [user.uid]);
+
+  // Real-time listener for user profile changes
+  useEffect(() => {
+    const docRef = doc(db, userDoc(user.uid));
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data() as UserProfile;
         setUserProfile(data);
-        setBio(data.bio || '');
-        
-        // Load liked posts if user has any
-        if (data.likedPosts && data.likedPosts.length > 0) {
-          loadLikedPosts(data.likedPosts);
+        if (bio === '') { // Set initial bio
+          setBio(data.bio || '');
         }
       } else {
         // Create profile if it doesn't exist
@@ -88,98 +95,13 @@ export default function Profile({ user }: { user: any }) {
           likedPosts: [],
           createdAt: serverTimestamp(),
         };
-        await setDoc(docRef, newProfile);
+        setDoc(docRef, newProfile);
         setUserProfile(newProfile);
-      }
-    };
-
-    loadProfile();
-
-    // Load user posts
-    const q = query(
-      collection(db, postsCol()), 
-      where('userId', '==', user.uid),
-      orderBy('createdAt', 'desc')
-    );
-    
-    const unsubscribe = onSnapshot(q, (snap) => {
-      const posts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData));
-      setUserPosts(posts);
-      
-      // Update posts count
-      updateDoc(doc(db, userDoc(user.uid)), {
-        postsCount: posts.length
-      });
-    });
-
-    return unsubscribe;
-  }, [user.uid, user.email, user.displayName]);
-
-  // Real-time listener for user profile changes (including liked posts)
-  useEffect(() => {
-    const unsubscribe = onSnapshot(doc(db, userDoc(user.uid)), (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data() as UserProfile;
-        const newLikedPosts = data.likedPosts || [];
-        
-        // Only reload liked posts if the list has changed
-        if (JSON.stringify(newLikedPosts) !== JSON.stringify(userProfile?.likedPosts || [])) {
-          setUserProfile(data);
-          if (newLikedPosts.length > 0) {
-            loadLikedPosts(newLikedPosts);
-          } else {
-            setLikedPosts([]);
-          }
-        }
       }
     });
 
     return unsubscribe;
   }, [user.uid]);
-
-  const loadLikedPosts = async (likedPostIds: string[]) => {
-    if (likedPostIds.length === 0) {
-      setLikedPosts([]);
-      return;
-    }
-
-    setLoadingLikedPosts(true);
-    try {
-      // Split into batches of 10 (Firestore 'in' query limit)
-      const batches = [];
-      for (let i = 0; i < likedPostIds.length; i += 10) {
-        batches.push(likedPostIds.slice(i, i + 10));
-      }
-
-      const allPosts: PostData[] = [];
-      for (const batch of batches) {
-        const q = query(
-          collection(db, postsCol()),
-          where(documentId(), 'in', batch)
-        );
-        const querySnapshot = await getDocs(q);
-        const batchPosts = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data()
-        } as PostData));
-        allPosts.push(...batchPosts);
-      }
-
-      // Sort by creation time (most recent first)
-      allPosts.sort((a, b) => {
-        if (!a.createdAt || !b.createdAt) return 0;
-        const aTime = a.createdAt.toDate ? a.createdAt.toDate() : new Date(a.createdAt);
-        const bTime = b.createdAt.toDate ? b.createdAt.toDate() : new Date(b.createdAt);
-        return bTime.getTime() - aTime.getTime();
-      });
-
-      setLikedPosts(allPosts);
-    } catch (error) {
-      console.error('Error loading liked posts:', error);
-    } finally {
-      setLoadingLikedPosts(false);
-    }
-  };
 
   const updateBio = async () => {
     try {
@@ -242,7 +164,7 @@ export default function Profile({ user }: { user: any }) {
   };
 
   const stats = [
-    { label: 'Posts', value: userProfile?.postsCount || 0 },
+    { label: 'Posts', value: userPosts.length },
     { label: 'Followers', value: userProfile?.followersCount || 0, onClick: () => setShowFollowers(true) },
     { label: 'Following', value: userProfile?.followingCount || 0, onClick: () => setShowFollowing(true) },
   ];
@@ -372,27 +294,10 @@ export default function Profile({ user }: { user: any }) {
       )}
 
       {activeTab === 'liked' && (
-        <div className="space-y-6">
-          {loadingLikedPosts ? (
-            <div className="text-center py-12">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading liked posts...</p>
-            </div>
-          ) : likedPosts.length === 0 ? (
-            <div className="text-center py-12">
-              <Heart className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No liked posts yet</p>
-              <p className="text-sm text-gray-500 mt-2">Posts you like will appear here</p>
-            </div>
-          ) : (
-            likedPosts.map((post) => (
-              <Post key={post.id} post={post} user={user} />
-            ))
-          )}
-        </div>
+        <LikedPosts user={user} likedPostIds={userProfile?.likedPosts || []} />
       )}
 
-      {/* Followers Modal */}
+      {/* Modals */}
       <Modal
         isOpen={showFollowers}
         onClose={() => setShowFollowers(false)}
@@ -404,7 +309,6 @@ export default function Profile({ user }: { user: any }) {
         </div>
       </Modal>
 
-      {/* Following Modal */}
       <Modal
         isOpen={showFollowing}
         onClose={() => setShowFollowing(false)}
@@ -416,7 +320,6 @@ export default function Profile({ user }: { user: any }) {
         </div>
       </Modal>
 
-      {/* Settings Modal */}
       <Modal
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
