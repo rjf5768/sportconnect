@@ -8,6 +8,7 @@ import {
   doc,
   runTransaction,
   updateDoc,
+  setDoc,
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
 import { postsCol, userDoc } from '../utils/paths';
@@ -55,6 +56,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   const [userPosts, setUserPosts] = useState<PostData[]>([]);
   const [viewedProfile, setViewedProfile] = useState<UserProfile | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [showSettings, setShowSettings] = useState(false);
   const [bio, setBio] = useState('');
@@ -65,18 +67,79 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   // Effect to listen for changes to the profile being viewed
   useEffect(() => {
     if (!profileId) return;
+    
+    setLoading(true);
+    console.log('Loading profile for ID:', profileId);
+    
     const docRef = doc(db, userDoc(profileId));
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      console.log('Profile document exists:', docSnap.exists());
+      console.log('Profile document data:', docSnap.data());
+      
       if (docSnap.exists()) {
-        const data = docSnap.data() as UserProfile;
-        setViewedProfile(data);
+        const data = docSnap.data();
+        // Ensure all required fields have default values
+        const profileData: UserProfile = {
+          uid: data.uid || profileId,
+          email: data.email || '',
+          displayName: data.displayName || 'Unknown User',
+          bio: data.bio || '',
+          followersCount: data.followersCount || 0,
+          followingCount: data.followingCount || 0,
+          postsCount: data.postsCount || 0,
+          followers: data.followers || [],
+          following: data.following || [],
+          likedPosts: data.likedPosts || [],
+          createdAt: data.createdAt
+        };
+        console.log('Setting viewed profile:', profileData);
+        setViewedProfile(profileData);
         if (isOwnProfile) {
-          setBio(data.bio || '');
+          setBio(profileData.bio || '');
         }
       } else {
-        setViewedProfile(null); // Handle case where profile doesn't exist
+        console.log('Profile document does not exist for ID:', profileId);
+        // If document doesn't exist, try to get info from their posts
+        const postsQuery = query(
+          collection(db, postsCol()), 
+          where('userId', '==', profileId),
+          orderBy('createdAt', 'desc')
+        );
+        
+        const unsubscribePosts = onSnapshot(postsQuery, (postsSnap) => {
+          let displayName = 'Unknown User';
+          let email = '';
+          
+          if (!postsSnap.empty) {
+            // Get display name from the most recent post
+            const mostRecentPost = postsSnap.docs[0].data();
+            displayName = mostRecentPost.userDisplayName || 'Unknown User';
+          }
+          
+          // Create a minimal profile with the info we have
+          setViewedProfile({
+            uid: profileId,
+            email: email,
+            displayName: displayName,
+            bio: '',
+            followersCount: 0,
+            followingCount: 0,
+            postsCount: 0,
+            followers: [],
+            following: [],
+            likedPosts: [],
+            createdAt: null
+          });
+          
+          unsubscribePosts();
+        });
       }
+      setLoading(false);
+    }, (error) => {
+      console.error('Error loading profile:', error);
+      setLoading(false);
     });
+    
     return unsubscribe;
   }, [profileId, isOwnProfile]);
   
@@ -86,7 +149,21 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
     const docRef = doc(db, userDoc(currentUser.uid));
     const unsubscribe = onSnapshot(docRef, (docSnap) => {
       if (docSnap.exists()) {
-        setCurrentUserProfile(docSnap.data() as UserProfile);
+        const data = docSnap.data();
+        const profileData: UserProfile = {
+          uid: data.uid || currentUser.uid,
+          email: data.email || '',
+          displayName: data.displayName || 'Unknown User',
+          bio: data.bio || '',
+          followersCount: data.followersCount || 0,
+          followingCount: data.followingCount || 0,
+          postsCount: data.postsCount || 0,
+          followers: data.followers || [],
+          following: data.following || [],
+          likedPosts: data.likedPosts || [],
+          createdAt: data.createdAt
+        };
+        setCurrentUserProfile(profileData);
       }
     });
     return unsubscribe;
@@ -121,33 +198,107 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   const followUser = async (targetUserId: string) => {
     if (isOwnProfile || !currentUserProfile) return;
   
-    const userRef = doc(db, userDoc(currentUser.uid));
+    const currentUserRef = doc(db, userDoc(currentUser.uid));
+    const targetUserRef = doc(db, userDoc(targetUserId));
     const amFollowing = currentUserProfile.following?.includes(targetUserId);
   
     try {
-      if (amFollowing) {
-        // Unfollow logic: Only update the current user's document
-        await updateDoc(userRef, {
-          following: (currentUserProfile.following || []).filter(id => id !== targetUserId),
-          followingCount: Math.max(0, (currentUserProfile.followingCount || 0) - 1)
-        });
-      } else {
-        // Follow logic: Only update the current user's document
-        await updateDoc(userRef, {
-          following: [...(currentUserProfile.following || []), targetUserId],
-          followingCount: (currentUserProfile.followingCount || 0) + 1
-        });
-      }
-      // Note: This simplified approach won't update the other user's follower count.
-      // A Cloud Function is the recommended way to handle that.
+      await runTransaction(db, async (transaction) => {
+        const currentUserDoc = await transaction.get(currentUserRef);
+        const targetUserDoc = await transaction.get(targetUserRef);
+        
+        if (!currentUserDoc.exists()) {
+          throw new Error("Current user document does not exist!");
+        }
+        
+        const currentUserData = currentUserDoc.data();
+        const targetUserData = targetUserDoc.exists() ? targetUserDoc.data() : null;
+        
+        const currentFollowing = currentUserData.following || [];
+        const currentFollowingCount = currentUserData.followingCount || 0;
+        
+        if (amFollowing) {
+          // Unfollow logic
+                      const newFollowing = currentFollowing.filter((id: string) => id !== targetUserId);
+          transaction.update(currentUserRef, {
+            following: newFollowing,
+            followingCount: Math.max(0, currentFollowingCount - 1)
+          });
+          
+          // Update target user's followers if their document exists
+          if (targetUserData) {
+            const targetFollowers = targetUserData.followers || [];
+            const targetFollowersCount = targetUserData.followersCount || 0;
+            const newTargetFollowers = targetFollowers.filter((id: string) => id !== currentUser.uid);
+            
+            transaction.update(targetUserRef, {
+              followers: newTargetFollowers,
+              followersCount: Math.max(0, targetFollowersCount - 1)
+            });
+          }
+        } else {
+          // Follow logic
+          const newFollowing = [...currentFollowing, targetUserId];
+          transaction.update(currentUserRef, {
+            following: newFollowing,
+            followingCount: currentFollowingCount + 1
+          });
+          
+          // Update target user's followers
+          if (targetUserData) {
+            const targetFollowers = targetUserData.followers || [];
+            const targetFollowersCount = targetUserData.followersCount || 0;
+            const newTargetFollowers = [...targetFollowers, currentUser.uid];
+            
+            transaction.update(targetUserRef, {
+              followers: newTargetFollowers,
+              followersCount: targetFollowersCount + 1
+            });
+          } else {
+            // Create target user document if it doesn't exist
+            transaction.set(targetUserRef, {
+              uid: targetUserId,
+              email: '',
+              displayName: viewedProfile?.displayName || 'Unknown User',
+              bio: '',
+              followersCount: 1,
+              followingCount: 0,
+              postsCount: 0,
+              followers: [currentUser.uid],
+              following: [],
+              likedPosts: [],
+              createdAt: new Date()
+            });
+          }
+        }
+      });
     } catch (error) {
       console.error('Error following/unfollowing user:', error);
     }
   };
+
+  const handleViewProfile = (uid: string) => {
+    // This function can be used if you need to navigate to another profile from within this profile
+    // For now, it's just a placeholder since we're already in the profile view
+    console.log('Navigate to profile:', uid);
+  };
   
   // A loading state while the viewed profile is being fetched
+  if (loading) {
+    return (
+      <div className="text-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+        <p className="text-gray-600">Loading profile...</p>
+      </div>
+    );
+  }
+
   if (!viewedProfile) {
-    return <p className="p-10 text-center">Loading profile...</p>;
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600">Profile not found</p>
+      </div>
+    );
   }
   
   // Determine if the current user is following the viewed profile
@@ -174,13 +325,14 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           ) : (
             <button 
               onClick={() => followUser(profileId)}
-              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+              disabled={!currentUserProfile}
+              className={`px-4 py-2 rounded-full text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 isFollowing 
                   ? 'bg-gray-200 text-gray-800 hover:bg-gray-300' 
                   : 'bg-indigo-600 text-white hover:bg-indigo-700'
               }`}
             >
-              {isFollowing ? 'Unfollow' : 'Follow'}
+              {!currentUserProfile ? 'Loading...' : (isFollowing ? 'Unfollow' : 'Follow')}
             </button>
           )}
         </div>
@@ -229,7 +381,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
         <div className="space-y-6">
           {userPosts.length === 0 
             ? <div className="text-center py-12"><Grid className="h-12 w-12 text-gray-400 mx-auto mb-4" /><p className="text-gray-600">This user hasn't posted yet.</p></div>
-            : userPosts.map((post) => <Post key={post.id} post={post} user={currentUser} onViewProfile={() => {}} />)
+            : userPosts.map((post) => <Post key={post.id} post={post} user={currentUser} onViewProfile={handleViewProfile} />)
           }
         </div>
       )}

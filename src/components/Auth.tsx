@@ -38,6 +38,13 @@ export default function Auth({ onLogin }: Props) {
           uid: cred.user.uid,
           email,
           displayName: name.trim(),
+          bio: '',
+          followersCount: 0,
+          followingCount: 0,
+          postsCount: 0,
+          followers: [],
+          following: [],
+          likedPosts: [],
           createdAt: serverTimestamp(),
         });
         onLogin(cred.user);
