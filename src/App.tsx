@@ -6,6 +6,7 @@ import CreatePost from './components/CreatePost';
 import PostList from './components/PostList';
 import Profile from './components/Profile';
 import Search from './components/Search';
+import Activity from './components/Activity';
 import { Home, Search as SearchIcon, Heart, User } from 'lucide-react';
 import './styles/index.css';
 
@@ -54,12 +55,17 @@ export default function App() {
             SportConnect
           </h1>
           {user && (
-            <button
-              onClick={() => signOut(auth)}
-              className="rounded-full bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 transition-colors"
-            >
-              Logout
-            </button>
+            <div className="flex items-center space-x-4">
+              <span className="text-sm text-gray-600">
+                Welcome, {user.displayName || user.email}
+              </span>
+              <button
+                onClick={() => signOut(auth)}
+                className="rounded-full bg-indigo-600 px-4 py-2 text-sm text-white hover:bg-indigo-700 transition-colors"
+              >
+                Logout
+              </button>
+            </div>
           )}
         </div>
       </header>
@@ -75,13 +81,8 @@ export default function App() {
                 <PostList user={user} onViewProfile={handleViewProfile} />
               </>
             )}
-            {activeTab === 'search' && <Search user={user} />}
-            {activeTab === 'activity' && (
-              <div className="text-center py-20">
-                <Heart className="mx-auto mb-4 h-12 w-12 text-gray-400" />
-                <p className="text-gray-600">Activity feed coming soon!</p>
-              </div>
-            )}
+            {activeTab === 'search' && <Search user={user} onViewProfile={handleViewProfile} />}
+            {activeTab === 'activity' && <Activity user={user} onViewProfile={handleViewProfile} />}
             {activeTab === 'profile' && profileIdToView && (
               <Profile currentUser={user} profileId={profileIdToView} />
             )}

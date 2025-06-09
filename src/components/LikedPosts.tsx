@@ -22,7 +22,13 @@ interface PostData {
   createdAt: any;
 }
 
-export default function LikedPosts({ user, likedPostIds }: { user: any, likedPostIds: string[] }) {
+interface LikedPostsProps {
+  user: any;
+  likedPostIds: string[];
+  onViewProfile: (uid: string) => void;
+}
+
+export default function LikedPosts({ user, likedPostIds, onViewProfile }: LikedPostsProps) {
   const [likedPosts, setLikedPosts] = useState<PostData[]>([]);
   const [loadingLikedPosts, setLoadingLikedPosts] = useState(true);
 
@@ -91,7 +97,7 @@ export default function LikedPosts({ user, likedPostIds }: { user: any, likedPos
         </div>
       ) : (
         likedPosts.map((post) => (
-          <Post key={post.id} post={post} user={user} />
+          <Post key={post.id} post={post} user={user} onViewProfile={onViewProfile} />
         ))
       )}
     </div>

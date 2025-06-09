@@ -57,6 +57,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   const [viewedProfile, setViewedProfile] = useState<UserProfile | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [followLoading, setFollowLoading] = useState(false); // Add this line
 
   const [showSettings, setShowSettings] = useState(false);
   const [bio, setBio] = useState('');
@@ -325,14 +326,23 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           ) : (
             <button 
               onClick={() => followUser(profileId)}
-              disabled={!currentUserProfile}
+              disabled={!currentUserProfile || followLoading}
               className={`px-4 py-2 rounded-full text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                 isFollowing 
                   ? 'bg-gray-200 text-gray-800 hover:bg-gray-300' 
                   : 'bg-indigo-600 text-white hover:bg-indigo-700'
               }`}
             >
-              {!currentUserProfile ? 'Loading...' : (isFollowing ? 'Unfollow' : 'Follow')}
+              {followLoading ? (
+                <div className="flex items-center space-x-2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
+                  <span>Loading...</span>
+                </div>
+              ) : !currentUserProfile ? (
+                'Loading...'
+              ) : (
+                isFollowing ? 'Unfollow' : 'Follow'
+              )}
             </button>
           )}
         </div>
@@ -386,7 +396,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
         </div>
       )}
 
-      {activeTab === 'liked' && <LikedPosts user={currentUser} likedPostIds={viewedProfile.likedPosts || []} />}
+      {activeTab === 'liked' && <LikedPosts user={currentUser} likedPostIds={viewedProfile.likedPosts || []} onViewProfile={handleViewProfile} />}
 
       {/* Settings Modal (only for own profile) */}
       <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Settings">

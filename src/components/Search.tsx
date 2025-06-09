@@ -32,7 +32,12 @@ interface PostData {
   createdAt: any;
 }
 
-export default function Search({ user }: { user: any }) {
+interface SearchProps {
+  user: any;
+  onViewProfile: (uid: string) => void;
+}
+
+export default function Search({ user, onViewProfile }: SearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<UserData[]>([]);
   const [recentPosts, setRecentPosts] = useState<PostData[]>([]);
@@ -121,7 +126,11 @@ export default function Search({ user }: { user: any }) {
           ) : (
             <div className="divide-y divide-gray-100">
               {searchResults.map((userData) => (
-                <div key={userData.id} className="p-4 hover:bg-gray-50 cursor-pointer">
+                <div 
+                  key={userData.id} 
+                  className="p-4 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => onViewProfile(userData.uid)}
+                >
                   <div className="flex items-center space-x-3">
                     <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
                       {userData.displayName?.[0]?.toUpperCase() || 'U'}
@@ -137,9 +146,6 @@ export default function Search({ user }: { user: any }) {
                       <div className="text-sm text-gray-500">
                         {userData.followersCount || 0} followers
                       </div>
-                      <button className="mt-1 px-4 py-1 bg-indigo-600 text-white text-sm rounded-full hover:bg-indigo-700 transition-colors">
-                        Follow
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -186,7 +192,11 @@ export default function Search({ user }: { user: any }) {
               ) : (
                 <div className="grid grid-cols-1 gap-4">
                   {recentPosts.slice(0, 10).map((post) => (
-                    <div key={post.id} className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+                    <div 
+                      key={post.id} 
+                      className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 cursor-pointer hover:bg-gray-50"
+                      onClick={() => onViewProfile(post.userId)}
+                    >
                       <div className="flex items-center space-x-3 mb-3">
                         <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
                           {post.userDisplayName?.[0]?.toUpperCase() || 'U'}

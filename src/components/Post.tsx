@@ -57,6 +57,7 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
+  const [likeLoading, setLikeLoading] = useState(false); // Add this line
   
   // Effect to update post data if the prop changes
   useEffect(() => {
@@ -80,7 +81,9 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
   }, [showComments, post.id]);
 
   const toggleLike = async () => {
-    if (!user || busy) return;
+    if (!user || busy || likeLoading) return; // Add likeLoading check
+    
+    setLikeLoading(true); // Disable like button during operation
     setBusy(true);
 
     const originalPostState = { ...currentPostData };
@@ -135,6 +138,7 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
       setCurrentPostData(originalPostState); // Revert on error
     } finally {
       setBusy(false);
+      setLikeLoading(false); // Re-enable like button
     }
   };
 
@@ -163,6 +167,34 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
       console.error('Error adding comment:', error);
     } finally {
       setSubmittingComment(false);
+    }
+  };
+
+  const deleteComment = async (commentId: string, commentUserId: string) => {
+    if (user?.uid !== commentUserId) {
+      alert("You can only delete your own comments.");
+      return;
+    }
+
+    if (window.confirm('Are you sure you want to delete this comment?')) {
+      try {
+        const batch = writeBatch(db);
+        
+        const commentRef = doc(db, commentsCol(post.id), commentId);
+        batch.delete(commentRef);
+        
+        const postRef = doc(db, postDoc(post.id));
+        // Use increment(-1) to safely decrement, ensuring it doesn't go below 0
+        batch.update(postRef, { 
+          commentCount: increment(-1)
+        });
+        
+        await batch.commit();
+        console.log('Comment deleted successfully');
+      } catch (error) {
+        console.error("Error deleting comment:", error);
+        alert("There was an error deleting the comment.");
+      }
     }
   };
 
@@ -274,10 +306,10 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
           <div className="flex items-center space-x-6">
             <button
               onClick={toggleLike}
-              disabled={busy}
+              disabled={busy || likeLoading}
               className={`flex items-center space-x-2 transition-colors ${
                 liked ? 'text-red-500' : 'text-gray-600 hover:text-red-500'
-              } ${busy ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(busy || likeLoading) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Heart 
                 className={`h-6 w-6 ${liked ? 'fill-current' : ''}`} 
@@ -326,11 +358,19 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
                     {comment.userDisplayName?.[0]?.toUpperCase() || 'U'}
                   </div>
                   <div className="flex-1">
-                    <div className="bg-gray-50 rounded-lg px-3 py-2">
+                    <div className="bg-gray-50 rounded-lg px-3 py-2 relative">
                       <p className="font-semibold text-sm text-gray-900">
                         {comment.userDisplayName}
                       </p>
                       <p className="text-gray-800">{comment.text}</p>
+                      {user?.uid === comment.userId && (
+                        <button
+                          onClick={() => deleteComment(comment.id, comment.userId)}
+                          className="absolute top-2 right-2 text-gray-400 hover:text-red-500 text-xs"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-gray-500 mt-1 ml-3">
                       {formatTimeAgo(comment.createdAt)}
