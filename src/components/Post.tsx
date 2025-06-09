@@ -1,4 +1,16 @@
-import React, { useState, useEffect } from 'react';
+// Interface for post data, including the optional imageUrl
+interface PostData {
+  id: string;
+  text: string;
+  imageUrl?: string;
+  userId: string;
+  userDisplayName: string;
+  userProfileImageUrl?: string;
+  likeCount: number;
+  commentCount: number;
+  likes: string[];
+  createdAt: any;
+}import React, { useState, useEffect } from 'react';
 import { 
   doc, 
   runTransaction, 
@@ -36,6 +48,7 @@ interface PostData {
   imageUrl?: string;
   userId: string;
   userDisplayName: string;
+  userProfileImageUrl?: string;
   likeCount: number;
   commentCount: number;
   likes: string[];
@@ -250,9 +263,17 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
         {/* Post Header */}
         <div className="flex items-center justify-between p-4 pb-2">
           <div className="flex items-center space-x-3">
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-              {currentPostData.userDisplayName?.[0]?.toUpperCase() || 'U'}
-            </div>
+            {currentPostData.userProfileImageUrl ? (
+              <img 
+                src={currentPostData.userProfileImageUrl} 
+                alt={currentPostData.userDisplayName}
+                className="h-10 w-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+                {currentPostData.userDisplayName?.[0]?.toUpperCase() || 'U'}
+              </div>
+            )}
             <div>
               <p
                 className="font-semibold text-gray-900 cursor-pointer hover:underline"
@@ -384,9 +405,17 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
 
         {/* Add Comment Form */}
         <form onSubmit={addComment} className="flex space-x-3 border-t pt-4">
-          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-            {user.displayName?.[0]?.toUpperCase() || 'U'}
-          </div>
+          {user.profileImageUrl ? (
+            <img 
+              src={user.profileImageUrl} 
+              alt={user.displayName}
+              className="h-8 w-8 rounded-full object-cover"
+            />
+          ) : (
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+              {user.displayName?.[0]?.toUpperCase() || 'U'}
+            </div>
+          )}
           <div className="flex-1 flex space-x-2">
             <input
               type="text"

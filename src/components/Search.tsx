@@ -18,6 +18,7 @@ interface UserData {
   displayName: string;
   email: string;
   bio?: string;
+  profileImageUrl?: string;
   followersCount?: number;
 }
 
@@ -132,9 +133,17 @@ export default function Search({ user, onViewProfile }: SearchProps) {
                   onClick={() => onViewProfile(userData.uid)}
                 >
                   <div className="flex items-center space-x-3">
-                    <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-                      {userData.displayName?.[0]?.toUpperCase() || 'U'}
-                    </div>
+                    {userData.profileImageUrl ? (
+                      <img 
+                        src={userData.profileImageUrl} 
+                        alt={userData.displayName}
+                        className="h-12 w-12 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+                        {userData.displayName?.[0]?.toUpperCase() || 'U'}
+                      </div>
+                    )}
                     <div className="flex-1">
                       <p className="font-semibold text-gray-900">{userData.displayName}</p>
                       <p className="text-sm text-gray-600">{userData.email}</p>

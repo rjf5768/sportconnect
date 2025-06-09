@@ -39,6 +39,7 @@ export default function Auth({ onLogin }: Props) {
           email,
           displayName: name.trim(),
           bio: '',
+          profileImageUrl: '',
           followersCount: 0,
           followingCount: 0,
           postsCount: 0,

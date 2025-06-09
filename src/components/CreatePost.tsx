@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../services/firebase';
-import { postsCol } from '../utils/paths';
+import { postsCol, userDoc } from '../utils/paths';
 import { Image, Smile, MapPin, X } from 'lucide-react';
 import EmojiPicker, { type EmojiClickData } from 'emoji-picker-react';
 
@@ -10,6 +10,11 @@ interface Props {
   user: any;
   standalone?: boolean;
   onPostCreated?: () => void;
+}
+
+interface UserProfile {
+  profileImageUrl?: string;
+  displayName?: string;
 }
 
 export default function CreatePost({ user, standalone = false, onPostCreated }: Props) {
@@ -24,6 +29,26 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
 
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
+  
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
+  // Get user profile data for profile image
+  useEffect(() => {
+    if (!user?.uid) return;
+    
+    const userDocRef = doc(db, userDoc(user.uid));
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setUserProfile({
+          profileImageUrl: data.profileImageUrl || '',
+          displayName: data.displayName || user.displayName
+        });
+      }
+    });
+    
+    return unsubscribe;
+  }, [user?.uid, user?.displayName]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -92,7 +117,8 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
         text: txt.trim(),
         imageUrl: imageUrl,
         userId: user.uid,
-        userDisplayName: user.displayName || 'Anonymous',
+        userDisplayName: userProfile?.displayName || user.displayName || 'Anonymous',
+        userProfileImageUrl: userProfile?.profileImageUrl || '',
         likeCount: 0,
         commentCount: 0,
         likes: [],
@@ -121,11 +147,19 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
     <div className={isStandalone ? "bg-white rounded-xl shadow-sm border border-gray-100 p-6" : "mb-6 rounded-xl bg-white p-4 shadow-sm border border-gray-100"}>
       {isStandalone && (
         <div className="flex items-center space-x-3 mb-4">
-          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-            {user.displayName?.[0]?.toUpperCase() || 'U'}
-          </div>
+          {userProfile?.profileImageUrl ? (
+            <img 
+              src={userProfile.profileImageUrl} 
+              alt={userProfile.displayName}
+              className="h-12 w-12 rounded-full object-cover"
+            />
+          ) : (
+            <div className="h-12 w-12 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+              {(userProfile?.displayName || user.displayName)?.[0]?.toUpperCase() || 'U'}
+            </div>
+          )}
           <div>
-            <p className="font-semibold text-gray-900">{user.displayName}</p>
+            <p className="font-semibold text-gray-900">{userProfile?.displayName || user.displayName}</p>
             <p className="text-sm text-gray-500">Create a new post</p>
           </div>
         </div>
@@ -133,9 +167,17 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
       <form onSubmit={submit} className={isStandalone ? "space-y-4" : ""}>
         <div className={`flex space-x-3 ${!isStandalone ? '' : 'flex-col'}`}>
           {!isStandalone && (
-            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-              {user.displayName?.[0]?.toUpperCase() || 'U'}
-            </div>
+            userProfile?.profileImageUrl ? (
+              <img 
+                src={userProfile.profileImageUrl} 
+                alt={userProfile.displayName}
+                className="h-10 w-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-semibold">
+                {(userProfile?.displayName || user.displayName)?.[0]?.toUpperCase() || 'U'}
+              </div>
+            )
           )}
           <div className="flex-1">
             <div className="relative">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   collection, 
   query, 
@@ -10,12 +10,14 @@ import {
   updateDoc,
   setDoc,
 } from 'firebase/firestore';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../services/firebase';
 import { postsCol, userDoc } from '../utils/paths';
-import { Settings, Grid, Heart } from 'lucide-react';
+import { Settings, Grid, Heart, Camera, Users } from 'lucide-react';
 import Post from './Post';
 import Modal from './Modal';
 import LikedPosts from './LikedPosts';
+import FollowersModal from './FollowersModal';
 
 // This interface defines the structure for a user's profile data
 interface UserProfile {
@@ -23,6 +25,7 @@ interface UserProfile {
   email: string;
   displayName: string;
   bio?: string;
+  profileImageUrl?: string;
   followersCount: number;
   followingCount: number;
   postsCount: number;
@@ -57,11 +60,19 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   const [viewedProfile, setViewedProfile] = useState<UserProfile | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [followLoading, setFollowLoading] = useState(false); // Add this line
+  const [followLoading, setFollowLoading] = useState(false);
 
   const [showSettings, setShowSettings] = useState(false);
   const [bio, setBio] = useState('');
   const [editingBio, setEditingBio] = useState(false);
+  
+  // Profile image states
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Followers/Following modal states
+  const [showFollowersModal, setShowFollowersModal] = useState(false);
+  const [showFollowingModal, setShowFollowingModal] = useState(false);
   
   const isOwnProfile = currentUser.uid === profileId;
 
@@ -85,6 +96,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           email: data.email || '',
           displayName: data.displayName || 'Unknown User',
           bio: data.bio || '',
+          profileImageUrl: data.profileImageUrl || '',
           followersCount: data.followersCount || 0,
           followingCount: data.followingCount || 0,
           postsCount: data.postsCount || 0,
@@ -123,6 +135,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
             email: email,
             displayName: displayName,
             bio: '',
+            profileImageUrl: '',
             followersCount: 0,
             followingCount: 0,
             postsCount: 0,
@@ -156,6 +169,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           email: data.email || '',
           displayName: data.displayName || 'Unknown User',
           bio: data.bio || '',
+          profileImageUrl: data.profileImageUrl || '',
           followersCount: data.followersCount || 0,
           followingCount: data.followingCount || 0,
           postsCount: data.postsCount || 0,
@@ -196,12 +210,74 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
     }
   };
 
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0] || !isOwnProfile) return;
+    
+    const file = e.target.files[0];
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      alert('Please select an image file');
+      return;
+    }
+    
+    // Validate file size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Image size must be less than 5MB');
+      return;
+    }
+    
+    setUploadingImage(true);
+    
+    try {
+      const storage = getStorage();
+      const imageRef = ref(storage, `profile-images/${currentUser.uid}/${Date.now()}-${file.name}`);
+      const snapshot = await uploadBytes(imageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      
+      // Update user profile with new image URL
+      await updateDoc(doc(db, userDoc(currentUser.uid)), { 
+        profileImageUrl: downloadURL 
+      });
+      
+      console.log('Profile image updated successfully');
+    } catch (error) {
+      console.error('Error uploading profile image:', error);
+      alert('There was an error uploading your image. Please try again.');
+    } finally {
+      setUploadingImage(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   const followUser = async (targetUserId: string) => {
-    if (isOwnProfile || !currentUserProfile) return;
+    console.log('Follow button clicked', { isOwnProfile, currentUserProfile, targetUserId, followLoading });
+    
+    // Prevent multiple simultaneous follow operations
+    if (followLoading) {
+      console.log('Follow operation already in progress, ignoring click');
+      return;
+    }
+    
+    if (isOwnProfile) {
+      console.log('Cannot follow own profile');
+      return;
+    }
+    
+    if (!currentUserProfile) {
+      console.log('No current user profile, cannot follow');
+      return;
+    }
+
+    setFollowLoading(true); // Disable button during operation
   
     const currentUserRef = doc(db, userDoc(currentUser.uid));
     const targetUserRef = doc(db, userDoc(targetUserId));
     const amFollowing = currentUserProfile.following?.includes(targetUserId);
+    
+    console.log('Am following:', amFollowing);
   
     try {
       await runTransaction(db, async (transaction) => {
@@ -215,12 +291,14 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
         const currentUserData = currentUserDoc.data();
         const targetUserData = targetUserDoc.exists() ? targetUserDoc.data() : null;
         
+        // Double-check the current state from the database to prevent race conditions
         const currentFollowing = currentUserData.following || [];
+        const isCurrentlyFollowing = currentFollowing.includes(targetUserId);
         const currentFollowingCount = currentUserData.followingCount || 0;
         
-        if (amFollowing) {
+        if (isCurrentlyFollowing) {
           // Unfollow logic
-                      const newFollowing = currentFollowing.filter((id: string) => id !== targetUserId);
+          const newFollowing = currentFollowing.filter((id: string) => id !== targetUserId);
           transaction.update(currentUserRef, {
             following: newFollowing,
             followingCount: Math.max(0, currentFollowingCount - 1)
@@ -262,6 +340,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
               email: '',
               displayName: viewedProfile?.displayName || 'Unknown User',
               bio: '',
+              profileImageUrl: '',
               followersCount: 1,
               followingCount: 0,
               postsCount: 0,
@@ -273,8 +352,13 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           }
         }
       });
+      
+      console.log('Follow/unfollow completed successfully');
     } catch (error) {
       console.error('Error following/unfollowing user:', error);
+      alert('There was an error with the follow operation. Please try again.');
+    } finally {
+      setFollowLoading(false); // Re-enable button
     }
   };
 
@@ -311,8 +395,41 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center space-x-4">
-            <div className="h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
-              {viewedProfile.displayName?.[0]?.toUpperCase() || 'U'}
+            <div className="relative">
+              {viewedProfile.profileImageUrl ? (
+                <img 
+                  src={viewedProfile.profileImageUrl} 
+                  alt={viewedProfile.displayName}
+                  className="h-20 w-20 rounded-full object-cover"
+                />
+              ) : (
+                <div className="h-20 w-20 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-2xl font-bold">
+                  {viewedProfile.displayName?.[0]?.toUpperCase() || 'U'}
+                </div>
+              )}
+              
+              {isOwnProfile && (
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingImage}
+                  className="absolute bottom-0 right-0 bg-indigo-600 hover:bg-indigo-700 text-white rounded-full p-2 shadow-lg transition-colors disabled:opacity-50"
+                  title="Change profile picture"
+                >
+                  {uploadingImage ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                  ) : (
+                    <Camera className="h-4 w-4" />
+                  )}
+                </button>
+              )}
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleImageUpload}
+                className="hidden"
+              />
             </div>
             <div>
               <h1 className="text-xl font-bold text-gray-900">{viewedProfile.displayName}</h1>
@@ -374,9 +491,24 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
         
         {/* Stats Section */}
         <div className="flex space-x-8">
-          <div className="text-center"><div className="text-xl font-bold text-gray-900">{userPosts.length}</div><div className="text-sm text-gray-600">Posts</div></div>
-          <div className="text-center"><div className="text-xl font-bold text-gray-900">{viewedProfile.followersCount || 0}</div><div className="text-sm text-gray-600">Followers</div></div>
-          <div className="text-center"><div className="text-xl font-bold text-gray-900">{viewedProfile.followingCount || 0}</div><div className="text-sm text-gray-600">Following</div></div>
+          <div className="text-center">
+            <div className="text-xl font-bold text-gray-900">{userPosts.length}</div>
+            <div className="text-sm text-gray-600">Posts</div>
+          </div>
+          <button 
+            onClick={() => setShowFollowersModal(true)}
+            className="text-center hover:bg-gray-50 px-3 py-1 rounded-lg transition-colors"
+          >
+            <div className="text-xl font-bold text-gray-900">{viewedProfile.followersCount || 0}</div>
+            <div className="text-sm text-gray-600">Followers</div>
+          </button>
+          <button 
+            onClick={() => setShowFollowingModal(true)}
+            className="text-center hover:bg-gray-50 px-3 py-1 rounded-lg transition-colors"
+          >
+            <div className="text-xl font-bold text-gray-900">{viewedProfile.followingCount || 0}</div>
+            <div className="text-sm text-gray-600">Following</div>
+          </button>
         </div>
       </div>
 
@@ -402,6 +534,24 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Settings">
         <div className="text-center py-8"><Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" /><p className="text-gray-600">Settings coming soon!</p></div>
       </Modal>
+
+      {/* Followers Modal */}
+      <FollowersModal 
+        isOpen={showFollowersModal}
+        onClose={() => setShowFollowersModal(false)}
+        title="Followers"
+        userIds={viewedProfile.followers || []}
+        onViewProfile={handleViewProfile}
+      />
+
+      {/* Following Modal */}
+      <FollowersModal 
+        isOpen={showFollowingModal}
+        onClose={() => setShowFollowingModal(false)}
+        title="Following"
+        userIds={viewedProfile.following || []}
+        onViewProfile={handleViewProfile}
+      />
     </div>
   );
 }
