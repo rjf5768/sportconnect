@@ -126,7 +126,7 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
       if (imageFile) {
         const storage = getStorage();
         const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}-${imageFile.name}`);
-        const snapshot = await uploadBytes(imageRef, imageRef);
+        const snapshot = await uploadBytes(imageRef, imageFile); // Fixed: was imageRef, imageRef
         imageUrl = await getDownloadURL(snapshot.ref);
       }
 

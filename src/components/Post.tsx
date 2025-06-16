@@ -375,31 +375,6 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
               {comments.map((comment) => (
                 <div key={comment.id} className="flex space-x-3">
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-              {user.displayName?.[0]?.toUpperCase() || 'U'}
-            </div>
-          )}
-          <div className="flex-1 flex space-x-2">
-            <input
-              type="text"
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Add a comment..."
-              className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              disabled={submittingComment}
-            />
-            <button
-              type="submit"
-              disabled={!newComment.trim() || submittingComment}
-              className="p-2 text-indigo-600 hover:text-indigo-700 disabled:text-gray-400 disabled:cursor-not-allowed"
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          </div>
-        </form>
-      </Modal>
-    </>
-  );
-}white text-sm font-semibold">
                     {comment.userDisplayName?.[0]?.toUpperCase() || 'U'}
                   </div>
                   <div className="flex-1">
@@ -436,4 +411,29 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
               className="h-8 w-8 rounded-full object-cover"
             />
           ) : (
-            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+              {user.displayName?.[0]?.toUpperCase() || 'U'}
+            </div>
+          )}
+          <div className="flex-1 flex space-x-2">
+            <input
+              type="text"
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              placeholder="Add a comment..."
+              className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              disabled={submittingComment}
+            />
+            <button
+              type="submit"
+              disabled={!newComment.trim() || submittingComment}
+              className="p-2 text-indigo-600 hover:text-indigo-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+            >
+              <Send className="h-5 w-5" />
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}

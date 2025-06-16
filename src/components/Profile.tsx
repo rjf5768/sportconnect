@@ -121,7 +121,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
-          location: data.location || null,
+          location: data.location || undefined, // Fixed: changed from null to undefined
           sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
@@ -162,7 +162,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
             followers: [],
             following: [],
             likedPosts: [],
-            location: null,
+            location: undefined, // Fixed: changed from null to undefined
             sportRatings: {},
             createdAt: null
           });
@@ -198,7 +198,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
-          location: data.location || null,
+          location: data.location || undefined, // Fixed: changed from null to undefined
           sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
@@ -371,7 +371,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
               followers: [currentUser.uid],
               following: [],
               likedPosts: [],
-              location: null,
+              location: undefined, // Fixed: changed from null to undefined
               sportRatings: {},
               createdAt: new Date()
             });
