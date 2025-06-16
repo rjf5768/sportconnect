@@ -21,6 +21,7 @@ interface UserData {
   bio?: string;
   profileImageUrl?: string;
   followersCount?: number;
+  distance?: number; // Added distance property
   location?: {
     city: string;
     state: string;

@@ -37,8 +37,9 @@ interface UserProfile {
     city: string;
     state: string;
     country: string;
-    latitude?: number;
-    longitude?: number;
+    latitude: number;
+    longitude: number;
+    formattedAddress: string;
   };
   sportRatings?: {
     tennis?: number;
@@ -94,6 +95,20 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   
   const isOwnProfile = currentUser.uid === profileId;
 
+  // Helper function to ensure location has all required properties
+  const normalizeLocation = (location: any) => {
+    if (!location) return undefined;
+    
+    return {
+      city: location.city || '',
+      state: location.state || '',
+      country: location.country || '',
+      latitude: location.latitude || 0,
+      longitude: location.longitude || 0,
+      formattedAddress: location.formattedAddress || `${location.city || ''}, ${location.state || ''}, ${location.country || ''}`
+    };
+  };
+
   // Effect to listen for changes to the profile being viewed
   useEffect(() => {
     if (!profileId) return;
@@ -121,7 +136,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
-          location: data.location || undefined, // Fixed: changed from null to undefined
+          location: normalizeLocation(data.location),
           sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
@@ -162,7 +177,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
             followers: [],
             following: [],
             likedPosts: [],
-            location: undefined, // Fixed: changed from null to undefined
+            location: undefined,
             sportRatings: {},
             createdAt: null
           });
@@ -198,7 +213,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
-          location: data.location || undefined, // Fixed: changed from null to undefined
+          location: normalizeLocation(data.location),
           sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
@@ -371,7 +386,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
               followers: [currentUser.uid],
               following: [],
               likedPosts: [],
-              location: undefined, // Fixed: changed from null to undefined
+              location: undefined,
               sportRatings: {},
               createdAt: new Date()
             });
