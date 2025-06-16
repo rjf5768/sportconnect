@@ -25,8 +25,9 @@ interface UserData {
     city: string;
     state: string;
     country: string;
-    latitude?: number;
-    longitude?: number;
+    latitude: number;
+    longitude: number;
+    formattedAddress: string;
   };
   sportRatings?: {
     tennis?: number;
@@ -47,11 +48,30 @@ interface PostData {
   userId: string;
   userDisplayName: string;
   userProfileImageUrl?: string;
+  userLocation?: {
+    city: string;
+    state: string;
+    country: string;
+    latitude: number;
+    longitude: number;
+    formattedAddress: string;
+  };
+  userSportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
   likeCount: number;
   commentCount: number;
   likes: string[];
   createdAt: any;
   score?: number;
+  distance?: number;
 }
 
 interface CurrentUserProfile {
@@ -59,6 +79,9 @@ interface CurrentUserProfile {
     city: string;
     state: string;
     country: string;
+    latitude: number;
+    longitude: number;
+    formattedAddress: string;
   };
   sportRatings?: {
     tennis?: number;
@@ -76,6 +99,19 @@ interface SearchProps {
   user: any;
   onViewProfile: (uid: string) => void;
 }
+
+// Haversine formula to calculate distance between two points on Earth
+const calculateHaversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c; // Distance in kilometers
+};
 
 export default function Search({ user, onViewProfile }: SearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -133,21 +169,17 @@ export default function Search({ user, onViewProfile }: SearchProps) {
     }
   }, [searchTerm, user.uid]);
 
-  const calculateDistance = (loc1: any, loc2: any): number => {
-    if (!loc1 || !loc2) return Infinity;
-    
-    // Simple scoring based on location match
-    let score = 0;
-    
-    if (loc1.city?.toLowerCase() === loc2.city?.toLowerCase()) {
-      score += 100; // Same city
-    } else if (loc1.state?.toLowerCase() === loc2.state?.toLowerCase()) {
-      score += 50; // Same state
-    } else if (loc1.country?.toLowerCase() === loc2.country?.toLowerCase()) {
-      score += 25; // Same country
+  const calculateDistance = (userLoc: any, postUserLoc: any): number => {
+    if (!userLoc || !postUserLoc || !userLoc.latitude || !userLoc.longitude || !postUserLoc.latitude || !postUserLoc.longitude) {
+      return Infinity;
     }
     
-    return 1000 - score; // Convert to distance (lower is better)
+    return calculateHaversineDistance(
+      userLoc.latitude,
+      userLoc.longitude,
+      postUserLoc.latitude,
+      postUserLoc.longitude
+    );
   };
 
   const calculateSportRatingDifference = (userRatings: any, postUserRatings: any): number => {
@@ -195,22 +227,39 @@ export default function Search({ user, onViewProfile }: SearchProps) {
         .map(post => {
           const postUser = users[post.userId];
           
-          const locationDistance = calculateDistance(currentUserProfile.location, postUser?.location);
+          // Use stored user location from post if available, otherwise user profile location
+          const postUserLocation = post.userLocation || postUser?.location;
+          
+          const distance = calculateDistance(currentUserProfile.location, postUserLocation);
           const ratingDifference = calculateSportRatingDifference(
             currentUserProfile.sportRatings, 
-            postUser?.sportRatings
+            post.userSportRatings || postUser?.sportRatings
           );
           
           // Location is more important than rating (weight: 70% location, 30% rating)
-          const locationScore = locationDistance === Infinity ? 1000 : locationDistance;
-          const ratingScore = ratingDifference === Infinity ? 100 : ratingDifference * 10;
+          // Convert distance to a score (closer = lower score = better)
+          let locationScore = 1000;
+          if (distance !== Infinity) {
+            // Score based on distance: 0-10km = 0-100, 10-50km = 100-300, 50-200km = 300-600, 200+km = 600-1000
+            if (distance <= 10) {
+              locationScore = distance * 10; // 0-100
+            } else if (distance <= 50) {
+              locationScore = 100 + (distance - 10) * 5; // 100-300
+            } else if (distance <= 200) {
+              locationScore = 300 + (distance - 50) * 2; // 300-600
+            } else {
+              locationScore = 600 + Math.min(distance - 200, 400); // 600-1000
+            }
+          }
           
+          const ratingScore = ratingDifference === Infinity ? 100 : ratingDifference * 10;
           const totalScore = (locationScore * 0.7) + (ratingScore * 0.3);
           
           return {
             ...post,
             userProfileImageUrl: postUser?.profileImageUrl || '',
-            score: totalScore
+            score: totalScore,
+            distance: distance === Infinity ? undefined : distance
           };
         })
         .sort((a, b) => a.score - b.score)
@@ -235,7 +284,22 @@ export default function Search({ user, onViewProfile }: SearchProps) {
           userData.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
           userData.email?.toLowerCase().includes(searchTerm.toLowerCase())
         )
-        .filter(userData => userData.uid !== user.uid); // Exclude current user
+        .filter(userData => userData.uid !== user.uid) // Exclude current user
+        .map(userData => {
+          // Calculate distance for search results too
+          if (currentUserProfile.location && userData.location) {
+            const distance = calculateDistance(currentUserProfile.location, userData.location);
+            return { ...userData, distance: distance === Infinity ? undefined : distance };
+          }
+          return userData;
+        })
+        .sort((a, b) => {
+          // Sort by distance if available, otherwise alphabetically
+          if (a.distance && b.distance) return a.distance - b.distance;
+          if (a.distance && !b.distance) return -1;
+          if (!a.distance && b.distance) return 1;
+          return a.displayName.localeCompare(b.displayName);
+        });
       
       setSearchResults(users);
     } catch (error) {
@@ -255,13 +319,16 @@ export default function Search({ user, onViewProfile }: SearchProps) {
     return `${Math.floor(diffInSeconds / 86400)}d`;
   };
 
+  const formatDistance = (distance?: number): string => {
+    if (!distance) return '';
+    if (distance < 1) return `${(distance * 1000).toFixed(0)}m away`;
+    if (distance < 10) return `${distance.toFixed(1)}km away`;
+    return `${Math.round(distance)}km away`;
+  };
+
   const getLocationText = (location: any): string => {
     if (!location) return '';
-    const parts = [];
-    if (location.city) parts.push(location.city);
-    if (location.state) parts.push(location.state);
-    if (location.country) parts.push(location.country);
-    return parts.join(', ');
+    return location.formattedAddress || `${location.city}, ${location.state}, ${location.country}`;
   };
 
   const getSportRatingsText = (ratings: any): string => {
@@ -318,7 +385,14 @@ export default function Search({ user, onViewProfile }: SearchProps) {
                       </div>
                     )}
                     <div className="flex-1">
-                      <p className="font-semibold text-gray-900">{userData.displayName}</p>
+                      <div className="flex items-center space-x-2">
+                        <p className="font-semibold text-gray-900">{userData.displayName}</p>
+                        {userData.distance && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                            {formatDistance(userData.distance)}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-600">{userData.email}</p>
                       {userData.location && (
                         <div className="flex items-center text-xs text-gray-500 mt-1">
@@ -400,7 +474,7 @@ export default function Search({ user, onViewProfile }: SearchProps) {
                     <div>
                       <h3 className="text-sm font-medium text-blue-900">Get Better Recommendations</h3>
                       <p className="text-sm text-blue-700 mt-1">
-                        Set your location and sport ratings in your profile settings to get personalized recommendations!
+                        Set your location and sport ratings in your profile settings to get personalized recommendations based on distance and interests!
                       </p>
                     </div>
                   </div>
@@ -433,7 +507,14 @@ export default function Search({ user, onViewProfile }: SearchProps) {
                           </div>
                         )}
                         <div className="flex-1">
-                          <p className="font-semibold text-sm text-gray-900">{post.userDisplayName}</p>
+                          <div className="flex items-center space-x-2">
+                            <p className="font-semibold text-sm text-gray-900">{post.userDisplayName}</p>
+                            {post.distance && (
+                              <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full">
+                                {formatDistance(post.distance)}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-gray-500">{formatTimeAgo(post.createdAt)}</p>
                         </div>
                         {post.score && post.score < 500 && (

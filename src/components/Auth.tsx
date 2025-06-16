@@ -45,7 +45,7 @@ export default function Auth({ onLogin }: Props) {
           followers: [],
           following: [],
           likedPosts: [],
-          location: null,
+          location: undefined, // Updated: changed from null to undefined to match interface
           sportRatings: {},
           createdAt: serverTimestamp(),
         });
