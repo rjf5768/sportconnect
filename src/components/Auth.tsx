@@ -8,7 +8,6 @@ import { setDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../services/firebase';
 import { userDoc } from '../utils/paths';
 
-
 interface Props {
   onLogin: (u: any) => void;
 }
@@ -46,6 +45,8 @@ export default function Auth({ onLogin }: Props) {
           followers: [],
           following: [],
           likedPosts: [],
+          location: null,
+          sportRatings: {},
           createdAt: serverTimestamp(),
         });
         onLogin(cred.user);

@@ -1,16 +1,4 @@
-// Interface for post data, including the optional imageUrl
-interface PostData {
-  id: string;
-  text: string;
-  imageUrl?: string;
-  userId: string;
-  userDisplayName: string;
-  userProfileImageUrl?: string;
-  likeCount: number;
-  commentCount: number;
-  likes: string[];
-  createdAt: any;
-}import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   doc, 
   runTransaction, 
@@ -41,7 +29,7 @@ interface Comment {
   createdAt: any;
 }
 
-// Interface for post data, including the optional imageUrl
+// Interface for post data, including the optional imageUrl and user data
 interface PostData {
   id: string;
   text: string;
@@ -49,6 +37,21 @@ interface PostData {
   userId: string;
   userDisplayName: string;
   userProfileImageUrl?: string;
+  userLocation?: {
+    city: string;
+    state: string;
+    country: string;
+  };
+  userSportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
   likeCount: number;
   commentCount: number;
   likes: string[];
@@ -70,7 +73,7 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
   const [newComment, setNewComment] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
-  const [likeLoading, setLikeLoading] = useState(false); // Add this line
+  const [likeLoading, setLikeLoading] = useState(false);
   
   // Effect to update post data if the prop changes
   useEffect(() => {
@@ -94,9 +97,9 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
   }, [showComments, post.id]);
 
   const toggleLike = async () => {
-    if (!user || busy || likeLoading) return; // Add likeLoading check
+    if (!user || busy || likeLoading) return;
     
-    setLikeLoading(true); // Disable like button during operation
+    setLikeLoading(true);
     setBusy(true);
 
     const originalPostState = { ...currentPostData };
@@ -141,9 +144,6 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
         
         if (userSnap.exists()) {
           tx.update(userRef, { likedPosts: newUserLikedPosts });
-        } else {
-          // This case can happen if the user document was deleted, but they can still like things.
-          // Depending on desired behavior, you might create a new user doc here.
         }
       });
     } catch (error) {
@@ -151,7 +151,7 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
       setCurrentPostData(originalPostState); // Revert on error
     } finally {
       setBusy(false);
-      setLikeLoading(false); // Re-enable like button
+      setLikeLoading(false);
     }
   };
 
@@ -197,7 +197,6 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
         batch.delete(commentRef);
         
         const postRef = doc(db, postDoc(post.id));
-        // Use increment(-1) to safely decrement, ensuring it doesn't go below 0
         batch.update(postRef, { 
           commentCount: increment(-1)
         });
@@ -376,6 +375,31 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
               {comments.map((comment) => (
                 <div key={comment.id} className="flex space-x-3">
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+              {user.displayName?.[0]?.toUpperCase() || 'U'}
+            </div>
+          )}
+          <div className="flex-1 flex space-x-2">
+            <input
+              type="text"
+              value={newComment}
+              onChange={(e) => setNewComment(e.target.value)}
+              placeholder="Add a comment..."
+              className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              disabled={submittingComment}
+            />
+            <button
+              type="submit"
+              disabled={!newComment.trim() || submittingComment}
+              className="p-2 text-indigo-600 hover:text-indigo-700 disabled:text-gray-400 disabled:cursor-not-allowed"
+            >
+              <Send className="h-5 w-5" />
+            </button>
+          </div>
+        </form>
+      </Modal>
+    </>
+  );
+}white text-sm font-semibold">
                     {comment.userDisplayName?.[0]?.toUpperCase() || 'U'}
                   </div>
                   <div className="flex-1">
@@ -412,29 +436,4 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
               className="h-8 w-8 rounded-full object-cover"
             />
           ) : (
-            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-              {user.displayName?.[0]?.toUpperCase() || 'U'}
-            </div>
-          )}
-          <div className="flex-1 flex space-x-2">
-            <input
-              type="text"
-              value={newComment}
-              onChange={(e) => setNewComment(e.target.value)}
-              placeholder="Add a comment..."
-              className="flex-1 border border-gray-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              disabled={submittingComment}
-            />
-            <button
-              type="submit"
-              disabled={!newComment.trim() || submittingComment}
-              className="p-2 text-indigo-600 hover:text-indigo-700 disabled:text-gray-400 disabled:cursor-not-allowed"
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          </div>
-        </form>
-      </Modal>
-    </>
-  );
-}
+            <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-

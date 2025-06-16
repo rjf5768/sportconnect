@@ -6,11 +6,12 @@ import {
   limit,
   onSnapshot,
   where,
-  getDocs
+  getDocs,
+  doc
 } from 'firebase/firestore';
 import { db } from '../services/firebase';
-import { usersCol, postsCol } from '../utils/paths';
-import { Search as SearchIcon, TrendingUp, Users, Hash } from 'lucide-react';
+import { usersCol, postsCol, userDoc } from '../utils/paths';
+import { Search as SearchIcon, TrendingUp, Users, Hash, RefreshCw, MapPin, Award } from 'lucide-react';
 
 interface UserData {
   id: string;
@@ -20,17 +21,55 @@ interface UserData {
   bio?: string;
   profileImageUrl?: string;
   followersCount?: number;
+  location?: {
+    city: string;
+    state: string;
+    country: string;
+    latitude?: number;
+    longitude?: number;
+  };
+  sportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
 }
 
 interface PostData {
   id: string;
   text: string;
+  imageUrl?: string;
   userId: string;
   userDisplayName: string;
+  userProfileImageUrl?: string;
   likeCount: number;
   commentCount: number;
   likes: string[];
   createdAt: any;
+  score?: number;
+}
+
+interface CurrentUserProfile {
+  location?: {
+    city: string;
+    state: string;
+    country: string;
+  };
+  sportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
 }
 
 interface SearchProps {
@@ -42,12 +81,26 @@ export default function Search({ user, onViewProfile }: SearchProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState<UserData[]>([]);
   const [recentPosts, setRecentPosts] = useState<PostData[]>([]);
+  const [recommendedPosts, setRecommendedPosts] = useState<PostData[]>([]);
+  const [currentUserProfile, setCurrentUserProfile] = useState<CurrentUserProfile>({});
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [trendingTopics] = useState([
     'Football', 'Basketball', 'Soccer', 'Tennis', 'Baseball', 'Hockey'
   ]);
   const [activeTab, setActiveTab] = useState('explore');
 
   useEffect(() => {
+    // Load current user's profile for recommendations
+    const unsubscribeUser = onSnapshot(doc(db, userDoc(user.uid)), (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setCurrentUserProfile({
+          location: data.location || null,
+          sportRatings: data.sportRatings || {}
+        });
+      }
+    });
+
     // Load recent posts for explore tab
     const q = query(
       collection(db, postsCol()),
@@ -55,10 +108,22 @@ export default function Search({ user, onViewProfile }: SearchProps) {
       limit(20)
     );
     
-    return onSnapshot(q, (snap) => {
+    const unsubscribePosts = onSnapshot(q, (snap) => {
       setRecentPosts(snap.docs.map((d) => ({ id: d.id, ...d.data() } as PostData)));
     });
-  }, []);
+
+    return () => {
+      unsubscribeUser();
+      unsubscribePosts();
+    };
+  }, [user.uid]);
+
+  // Load recommendations when user profile changes
+  useEffect(() => {
+    if (currentUserProfile.location || Object.keys(currentUserProfile.sportRatings || {}).length > 0) {
+      loadRecommendations();
+    }
+  }, [currentUserProfile]);
 
   useEffect(() => {
     if (searchTerm.trim()) {
@@ -67,6 +132,97 @@ export default function Search({ user, onViewProfile }: SearchProps) {
       setSearchResults([]);
     }
   }, [searchTerm, user.uid]);
+
+  const calculateDistance = (loc1: any, loc2: any): number => {
+    if (!loc1 || !loc2) return Infinity;
+    
+    // Simple scoring based on location match
+    let score = 0;
+    
+    if (loc1.city?.toLowerCase() === loc2.city?.toLowerCase()) {
+      score += 100; // Same city
+    } else if (loc1.state?.toLowerCase() === loc2.state?.toLowerCase()) {
+      score += 50; // Same state
+    } else if (loc1.country?.toLowerCase() === loc2.country?.toLowerCase()) {
+      score += 25; // Same country
+    }
+    
+    return 1000 - score; // Convert to distance (lower is better)
+  };
+
+  const calculateSportRatingDifference = (userRatings: any, postUserRatings: any): number => {
+    if (!userRatings || !postUserRatings) return Infinity;
+    
+    const sports = ['tennis', 'basketball', 'soccer', 'football', 'baseball', 'golf', 'swimming', 'running'];
+    let totalDiff = 0;
+    let commonSports = 0;
+    
+    for (const sport of sports) {
+      if (userRatings[sport] && postUserRatings[sport]) {
+        totalDiff += Math.abs(userRatings[sport] - postUserRatings[sport]);
+        commonSports++;
+      }
+    }
+    
+    if (commonSports === 0) return Infinity;
+    return totalDiff / commonSports;
+  };
+
+  const loadRecommendations = async () => {
+    setLoadingRecommendations(true);
+    
+    try {
+      // Get all posts
+      const postsQuery = query(
+        collection(db, postsCol()),
+        orderBy('createdAt', 'desc'),
+        limit(50)
+      );
+      const postsSnapshot = await getDocs(postsQuery);
+      const posts = postsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PostData));
+      
+      // Get all users for their profiles
+      const usersQuery = query(collection(db, usersCol()));
+      const usersSnapshot = await getDocs(usersQuery);
+      const users = usersSnapshot.docs.reduce((acc, doc) => {
+        acc[doc.data().uid] = doc.data();
+        return acc;
+      }, {} as Record<string, any>);
+      
+      // Score posts based on location and sport ratings
+      const scoredPosts = posts
+        .filter(post => post.userId !== user.uid) // Exclude own posts
+        .map(post => {
+          const postUser = users[post.userId];
+          
+          const locationDistance = calculateDistance(currentUserProfile.location, postUser?.location);
+          const ratingDifference = calculateSportRatingDifference(
+            currentUserProfile.sportRatings, 
+            postUser?.sportRatings
+          );
+          
+          // Location is more important than rating (weight: 70% location, 30% rating)
+          const locationScore = locationDistance === Infinity ? 1000 : locationDistance;
+          const ratingScore = ratingDifference === Infinity ? 100 : ratingDifference * 10;
+          
+          const totalScore = (locationScore * 0.7) + (ratingScore * 0.3);
+          
+          return {
+            ...post,
+            userProfileImageUrl: postUser?.profileImageUrl || '',
+            score: totalScore
+          };
+        })
+        .sort((a, b) => a.score - b.score)
+        .slice(0, 15);
+      
+      setRecommendedPosts(scoredPosts);
+    } catch (error) {
+      console.error('Error loading recommendations:', error);
+    } finally {
+      setLoadingRecommendations(false);
+    }
+  };
 
   const searchUsers = async () => {
     try {
@@ -97,6 +253,23 @@ export default function Search({ user, onViewProfile }: SearchProps) {
     if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
     if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
     return `${Math.floor(diffInSeconds / 86400)}d`;
+  };
+
+  const getLocationText = (location: any): string => {
+    if (!location) return '';
+    const parts = [];
+    if (location.city) parts.push(location.city);
+    if (location.state) parts.push(location.state);
+    if (location.country) parts.push(location.country);
+    return parts.join(', ');
+  };
+
+  const getSportRatingsText = (ratings: any): string => {
+    if (!ratings || Object.keys(ratings).length === 0) return '';
+    const ratingsList = Object.entries(ratings)
+      .map(([sport, rating]) => `${sport.charAt(0).toUpperCase() + sport.slice(1)}: ${rating}`)
+      .slice(0, 2); // Show only first 2 ratings
+    return ratingsList.join(', ');
   };
 
   return (
@@ -147,8 +320,20 @@ export default function Search({ user, onViewProfile }: SearchProps) {
                     <div className="flex-1">
                       <p className="font-semibold text-gray-900">{userData.displayName}</p>
                       <p className="text-sm text-gray-600">{userData.email}</p>
+                      {userData.location && (
+                        <div className="flex items-center text-xs text-gray-500 mt-1">
+                          <MapPin className="h-3 w-3 mr-1" />
+                          {getLocationText(userData.location)}
+                        </div>
+                      )}
+                      {userData.sportRatings && Object.keys(userData.sportRatings).length > 0 && (
+                        <div className="flex items-center text-xs text-gray-500 mt-1">
+                          <Award className="h-3 w-3 mr-1" />
+                          {getSportRatingsText(userData.sportRatings)}
+                        </div>
+                      )}
                       {userData.bio && (
-                        <p className="text-sm text-gray-500 mt-1">{userData.bio}</p>
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-1">{userData.bio}</p>
                       )}
                     </div>
                     <div className="text-right">
@@ -193,35 +378,90 @@ export default function Search({ user, onViewProfile }: SearchProps) {
           {/* Explore Tab */}
           {activeTab === 'explore' && (
             <div className="space-y-4">
-              <h2 className="text-lg font-semibold text-gray-900">Recent Posts</h2>
-              {recentPosts.length === 0 ? (
-                <div className="bg-white rounded-xl p-8 text-center">
-                  <p className="text-gray-600">No posts to explore yet</p>
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {recommendedPosts.length > 0 ? 'Recommended for You' : 'Recent Posts'}
+                </h2>
+                <button
+                  onClick={loadRecommendations}
+                  disabled={loadingRecommendations}
+                  className="flex items-center space-x-2 px-3 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  <RefreshCw className={`h-4 w-4 ${loadingRecommendations ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
+
+              {/* Show recommendation status */}
+              {(!currentUserProfile.location && Object.keys(currentUserProfile.sportRatings || {}).length === 0) && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <div className="flex items-start space-x-3">
+                    <MapPin className="h-5 w-5 text-blue-600 mt-0.5" />
+                    <div>
+                      <h3 className="text-sm font-medium text-blue-900">Get Better Recommendations</h3>
+                      <p className="text-sm text-blue-700 mt-1">
+                        Set your location and sport ratings in your profile settings to get personalized recommendations!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {loadingRecommendations ? (
+                <div className="text-center py-8">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto mb-4"></div>
+                  <p className="text-gray-600">Loading recommendations...</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4">
-                  {recentPosts.slice(0, 10).map((post) => (
+                  {(recommendedPosts.length > 0 ? recommendedPosts : recentPosts.slice(0, 10)).map((post) => (
                     <div 
                       key={post.id} 
-                      className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 cursor-pointer hover:bg-gray-50"
+                      className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 cursor-pointer hover:bg-gray-50 transition-colors"
                       onClick={() => onViewProfile(post.userId)}
                     >
                       <div className="flex items-center space-x-3 mb-3">
-                        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
-                          {post.userDisplayName?.[0]?.toUpperCase() || 'U'}
-                        </div>
-                        <div>
+                        {post.userProfileImageUrl ? (
+                          <img 
+                            src={post.userProfileImageUrl} 
+                            alt={post.userDisplayName}
+                            className="h-8 w-8 rounded-full object-cover"
+                          />
+                        ) : (
+                          <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-semibold">
+                            {post.userDisplayName?.[0]?.toUpperCase() || 'U'}
+                          </div>
+                        )}
+                        <div className="flex-1">
                           <p className="font-semibold text-sm text-gray-900">{post.userDisplayName}</p>
                           <p className="text-xs text-gray-500">{formatTimeAgo(post.createdAt)}</p>
                         </div>
+                        {post.score && post.score < 500 && (
+                          <div className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">
+                            Recommended
+                          </div>
+                        )}
                       </div>
-                      <p className="text-gray-800 text-sm line-clamp-3">{post.text}</p>
-                      <div className="flex items-center space-x-4 mt-3 text-sm text-gray-500">
+                      <p className="text-gray-800 text-sm line-clamp-3 mb-3">{post.text}</p>
+                      {post.imageUrl && (
+                        <img 
+                          src={post.imageUrl} 
+                          alt="Post content" 
+                          className="w-full h-32 object-cover rounded-lg mb-3"
+                        />
+                      )}
+                      <div className="flex items-center space-x-4 text-sm text-gray-500">
                         <span>❤️ {post.likeCount || 0}</span>
                         <span>💬 {post.commentCount || 0}</span>
                       </div>
                     </div>
                   ))}
+                  
+                  {recentPosts.length === 0 && recommendedPosts.length === 0 && (
+                    <div className="bg-white rounded-xl p-8 text-center">
+                      <p className="text-gray-600">No posts to explore yet</p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

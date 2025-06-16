@@ -18,6 +18,7 @@ import Post from './Post';
 import Modal from './Modal';
 import LikedPosts from './LikedPosts';
 import FollowersModal from './FollowersModal';
+import SettingsModal from './Settings';
 
 // This interface defines the structure for a user's profile data
 interface UserProfile {
@@ -32,6 +33,23 @@ interface UserProfile {
   followers: string[];
   following: string[];
   likedPosts: string[];
+  location?: {
+    city: string;
+    state: string;
+    country: string;
+    latitude?: number;
+    longitude?: number;
+  };
+  sportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
   createdAt: any;
 }
 
@@ -103,6 +121,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
+          location: data.location || null,
+          sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
         console.log('Setting viewed profile:', profileData);
@@ -142,6 +162,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
             followers: [],
             following: [],
             likedPosts: [],
+            location: null,
+            sportRatings: {},
             createdAt: null
           });
           
@@ -176,6 +198,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
           followers: data.followers || [],
           following: data.following || [],
           likedPosts: data.likedPosts || [],
+          location: data.location || null,
+          sportRatings: data.sportRatings || {},
           createdAt: data.createdAt
         };
         setCurrentUserProfile(profileData);
@@ -347,6 +371,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
               followers: [currentUser.uid],
               following: [],
               likedPosts: [],
+              location: null,
+              sportRatings: {},
               createdAt: new Date()
             });
           }
@@ -531,9 +557,12 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       {activeTab === 'liked' && <LikedPosts user={currentUser} likedPostIds={viewedProfile.likedPosts || []} onViewProfile={handleViewProfile} />}
 
       {/* Settings Modal (only for own profile) */}
-      <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Settings">
-        <div className="text-center py-8"><Settings className="h-12 w-12 text-gray-400 mx-auto mb-4" /><p className="text-gray-600">Settings coming soon!</p></div>
-      </Modal>
+      <SettingsModal 
+        isOpen={showSettings} 
+        onClose={() => setShowSettings(false)} 
+        user={currentUser}
+        userProfile={viewedProfile}
+      />
 
       {/* Followers Modal */}
       <FollowersModal 

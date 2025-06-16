@@ -15,6 +15,21 @@ interface Props {
 interface UserProfile {
   profileImageUrl?: string;
   displayName?: string;
+  location?: {
+    city: string;
+    state: string;
+    country: string;
+  };
+  sportRatings?: {
+    tennis?: number;
+    basketball?: number;
+    soccer?: number;
+    football?: number;
+    baseball?: number;
+    golf?: number;
+    swimming?: number;
+    running?: number;
+  };
 }
 
 export default function CreatePost({ user, standalone = false, onPostCreated }: Props) {
@@ -32,7 +47,7 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
   
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  // Get user profile data for profile image
+  // Get user profile data for profile image and other data
   useEffect(() => {
     if (!user?.uid) return;
     
@@ -42,7 +57,9 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
         const data = docSnap.data();
         setUserProfile({
           profileImageUrl: data.profileImageUrl || '',
-          displayName: data.displayName || user.displayName
+          displayName: data.displayName || user.displayName,
+          location: data.location || null,
+          sportRatings: data.sportRatings || {}
         });
       }
     });
@@ -109,7 +126,7 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
       if (imageFile) {
         const storage = getStorage();
         const imageRef = ref(storage, `posts/${user.uid}/${Date.now()}-${imageFile.name}`);
-        const snapshot = await uploadBytes(imageRef, imageFile);
+        const snapshot = await uploadBytes(imageRef, imageRef);
         imageUrl = await getDownloadURL(snapshot.ref);
       }
 
@@ -119,6 +136,8 @@ export default function CreatePost({ user, standalone = false, onPostCreated }: 
         userId: user.uid,
         userDisplayName: userProfile?.displayName || user.displayName || 'Anonymous',
         userProfileImageUrl: userProfile?.profileImageUrl || '',
+        userLocation: userProfile?.location || null,
+        userSportRatings: userProfile?.sportRatings || {},
         likeCount: 0,
         commentCount: 0,
         likes: [],
