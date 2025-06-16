@@ -140,10 +140,30 @@ export default function Post({ post, user, onViewProfile }: PostProps) {
           ? userLikedPosts.filter((id) => id !== post.id)
           : [...userLikedPosts, post.id];
         
+        // Update post likes
         tx.update(postRef, { likes: newLikes, likeCount: newLikes.length });
         
+        // Update or create user document with liked posts
         if (userSnap.exists()) {
           tx.update(userRef, { likedPosts: newUserLikedPosts });
+        } else {
+          // Create user document if it doesn't exist
+          tx.set(userRef, {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || 'Unknown User',
+            bio: '',
+            profileImageUrl: '',
+            followersCount: 0,
+            followingCount: 0,
+            postsCount: 0,
+            followers: [],
+            following: [],
+            likedPosts: newUserLikedPosts,
+            location: undefined,
+            sportRatings: {},
+            createdAt: serverTimestamp(),
+          });
         }
       });
     } catch (error) {

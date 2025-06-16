@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../services/firebase';
-import { userDoc } from '../utils/paths';
-import { MapPin, Award, Save, X, Search } from 'lucide-react';
+import { doc, updateDoc, setDoc, deleteDoc, collection, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { deleteUser } from 'firebase/auth';
+import { db, auth } from '../services/firebase';
+import { userDoc, postsCol, commentsCol } from '../utils/paths';
+import { MapPin, Award, Save, X, Search, Trash2, AlertTriangle } from 'lucide-react';
 
 interface UserProfile {
   uid: string;
@@ -86,6 +87,9 @@ export default function Settings({ isOpen, onClose, user, userProfile }: Setting
   const [gettingLocation, setGettingLocation] = useState(false);
   const [searchingLocations, setSearchingLocations] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   useEffect(() => {
     if (userProfile?.location) {
@@ -249,16 +253,139 @@ export default function Settings({ isOpen, onClose, user, userProfile }: Setting
 
       // Only add location if one is selected
       if (selectedLocation) {
-        updateData.location = selectedLocation;
+        updateData.location = {
+          city: selectedLocation.city,
+          state: selectedLocation.state,
+          country: selectedLocation.country,
+          latitude: selectedLocation.latitude,
+          longitude: selectedLocation.longitude,
+          formattedAddress: selectedLocation.formattedAddress
+        };
       }
 
-      await updateDoc(doc(db, userDoc(user.uid)), updateData);
+      const userDocRef = doc(db, userDoc(user.uid));
+      
+      try {
+        await updateDoc(userDocRef, updateData);
+      } catch (error: any) {
+        // If document doesn't exist, create it
+        if (error.code === 'not-found') {
+          const fullUserData = {
+            uid: user.uid,
+            email: user.email || '',
+            displayName: user.displayName || 'Unknown User',
+            bio: userProfile?.bio || '',
+            profileImageUrl: userProfile?.profileImageUrl || '',
+            followersCount: userProfile?.followersCount || 0,
+            followingCount: userProfile?.followingCount || 0,
+            postsCount: userProfile?.postsCount || 0,
+            followers: userProfile?.followers || [],
+            following: userProfile?.following || [],
+            likedPosts: userProfile?.likedPosts || [],
+            ...updateData,
+            createdAt: new Date(),
+          };
+          await setDoc(userDocRef, fullUserData);
+        } else {
+          throw error;
+        }
+      }
+      
       onClose();
     } catch (error) {
       console.error('Error saving settings:', error);
       alert('Error saving settings. Please try again.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== 'DELETE') {
+      alert('Please type "DELETE" to confirm account deletion.');
+      return;
+    }
+
+    setDeleteLoading(true);
+
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Delete all user's posts
+      const postsQuery = query(collection(db, postsCol()), where('userId', '==', user.uid));
+      const postsSnapshot = await getDocs(postsQuery);
+      
+      for (const postDoc of postsSnapshot.docs) {
+        // Delete all comments for each post
+        const commentsQuery = query(collection(db, commentsCol(postDoc.id)));
+        const commentsSnapshot = await getDocs(commentsQuery);
+        
+        commentsSnapshot.docs.forEach(commentDoc => {
+          batch.delete(commentDoc.ref);
+        });
+        
+        // Delete the post
+        batch.delete(postDoc.ref);
+      }
+      
+      // 2. Remove user from other users' followers/following lists
+      const allUsersQuery = query(collection(db, 'artifacts/sportconnect/public/data/users'));
+      const allUsersSnapshot = await getDocs(allUsersQuery);
+      
+      allUsersSnapshot.docs.forEach(userDocSnap => {
+        const userData = userDocSnap.data();
+        let needsUpdate = false;
+        const updates: any = {};
+        
+        // Remove from followers list
+        if (userData.followers && userData.followers.includes(user.uid)) {
+          updates.followers = userData.followers.filter((id: string) => id !== user.uid);
+          updates.followersCount = Math.max(0, (userData.followersCount || 0) - 1);
+          needsUpdate = true;
+        }
+        
+        // Remove from following list
+        if (userData.following && userData.following.includes(user.uid)) {
+          updates.following = userData.following.filter((id: string) => id !== user.uid);
+          updates.followingCount = Math.max(0, (userData.followingCount || 0) - 1);
+          needsUpdate = true;
+        }
+        
+        // Remove from liked posts
+        if (userData.likedPosts && Array.isArray(userData.likedPosts)) {
+          // Remove any posts by this user from other users' liked posts
+          const postsToRemove = postsSnapshot.docs.map(doc => doc.id);
+          const filteredLikedPosts = userData.likedPosts.filter((postId: string) => !postsToRemove.includes(postId));
+          
+          if (filteredLikedPosts.length !== userData.likedPosts.length) {
+            updates.likedPosts = filteredLikedPosts;
+            needsUpdate = true;
+          }
+        }
+        
+        if (needsUpdate) {
+          batch.update(userDocSnap.ref, updates);
+        }
+      });
+      
+      // 3. Delete user profile document
+      batch.delete(doc(db, userDoc(user.uid)));
+      
+      // Commit all deletions
+      await batch.commit();
+      
+      // 4. Delete Firebase Auth user (this should be last)
+      await deleteUser(auth.currentUser!);
+      
+      alert('Your account has been successfully deleted.');
+      
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      alert('There was an error deleting your account. Please try again or contact support.');
+    } finally {
+      setDeleteLoading(false);
+      setShowDeleteConfirm(false);
+      setDeleteConfirmText('');
     }
   };
 
@@ -412,6 +539,38 @@ export default function Settings({ isOpen, onClose, user, userProfile }: Setting
                 ))}
               </div>
             </div>
+
+            {/* Delete Account Section */}
+            <div className="border-t border-gray-200 pt-8">
+              <div className="flex items-center space-x-2 mb-4">
+                <Trash2 className="h-5 w-5 text-red-600" />
+                <h3 className="text-lg font-semibold text-red-900">Danger Zone</h3>
+              </div>
+              
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h4 className="text-sm font-medium text-red-900 mb-2">Delete Account</h4>
+                    <p className="text-sm text-red-700 mb-4">
+                      Permanently delete your account and all associated data. This action cannot be undone.
+                    </p>
+                    <ul className="text-sm text-red-600 mb-4 list-disc list-inside space-y-1">
+                      <li>All your posts and comments will be deleted</li>
+                      <li>You will be removed from other users' followers/following lists</li>
+                      <li>Your profile and all settings will be permanently removed</li>
+                      <li>This action cannot be reversed</li>
+                    </ul>
+                    <button
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium"
+                    >
+                      Delete Account
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -442,6 +601,84 @@ export default function Settings({ isOpen, onClose, user, userProfile }: Setting
           </button>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="absolute inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-10">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="p-6">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="flex-shrink-0 w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                  <AlertTriangle className="h-6 w-6 text-red-600" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">Delete Account</h3>
+                  <p className="text-sm text-gray-600">This action cannot be undone</p>
+                </div>
+              </div>
+              
+              <div className="mb-6">
+                <p className="text-sm text-gray-700 mb-4">
+                  Are you absolutely sure you want to delete your account? This will:
+                </p>
+                <ul className="text-sm text-gray-600 list-disc list-inside space-y-1 mb-4">
+                  <li>Permanently delete all your posts and comments</li>
+                  <li>Remove you from other users' followers/following lists</li>
+                  <li>Delete your profile and all personal data</li>
+                  <li>Sign you out immediately</li>
+                </ul>
+                
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+                  <p className="text-sm text-yellow-800">
+                    <strong>Warning:</strong> This action is permanent and cannot be reversed.
+                  </p>
+                </div>
+                
+                <p className="text-sm text-gray-700 mb-2">
+                  To confirm, please type <strong>DELETE</strong> in the box below:
+                </p>
+                <input
+                  type="text"
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="Type DELETE to confirm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                />
+              </div>
+              
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteConfirmText('');
+                  }}
+                  disabled={deleteLoading}
+                  className="flex-1 px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText !== 'DELETE' || deleteLoading}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center space-x-2"
+                >
+                  {deleteLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      <span>Deleting...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4" />
+                      <span>Delete Account</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

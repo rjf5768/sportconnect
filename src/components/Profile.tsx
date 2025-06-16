@@ -9,6 +9,7 @@ import {
   runTransaction,
   updateDoc,
   setDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db } from '../services/firebase';
@@ -103,10 +104,38 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       city: location.city || '',
       state: location.state || '',
       country: location.country || '',
-      latitude: location.latitude || 0,
-      longitude: location.longitude || 0,
+      latitude: typeof location.latitude === 'number' ? location.latitude : 0,
+      longitude: typeof location.longitude === 'number' ? location.longitude : 0,
       formattedAddress: location.formattedAddress || `${location.city || ''}, ${location.state || ''}, ${location.country || ''}`
     };
+  };
+
+  // Helper function to create a minimal profile document for users who don't have one yet
+  const createMinimalProfile = async (userId: string, displayName: string, email: string) => {
+    const minimalProfile = {
+      uid: userId,
+      email: email || '',
+      displayName: displayName || 'Unknown User',
+      bio: '',
+      profileImageUrl: '',
+      followersCount: 0,
+      followingCount: 0,
+      postsCount: 0,
+      followers: [],
+      following: [],
+      likedPosts: [],
+      sportRatings: {},
+      createdAt: serverTimestamp(),
+    };
+    
+    try {
+      await setDoc(doc(db, userDoc(userId)), minimalProfile);
+      console.log('Created minimal profile for user:', userId);
+      return minimalProfile;
+    } catch (error) {
+      console.error('Error creating minimal profile:', error);
+      return minimalProfile;
+    }
   };
 
   // Effect to listen for changes to the profile being viewed
@@ -117,9 +146,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
     console.log('Loading profile for ID:', profileId);
     
     const docRef = doc(db, userDoc(profileId));
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+    const unsubscribe = onSnapshot(docRef, async (docSnap) => {
       console.log('Profile document exists:', docSnap.exists());
-      console.log('Profile document data:', docSnap.data());
       
       if (docSnap.exists()) {
         const data = docSnap.data();
@@ -145,30 +173,23 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
         if (isOwnProfile) {
           setBio(profileData.bio || '');
         }
+        setLoading(false);
       } else {
         console.log('Profile document does not exist for ID:', profileId);
-        // If document doesn't exist, try to get info from their posts
-        const postsQuery = query(
-          collection(db, postsCol()), 
-          where('userId', '==', profileId),
-          orderBy('createdAt', 'desc')
-        );
         
-        const unsubscribePosts = onSnapshot(postsQuery, (postsSnap) => {
-          let displayName = 'Unknown User';
-          let email = '';
+        // For the current user's own profile, try to create the document
+        if (isOwnProfile && currentUser) {
+          console.log('Creating profile document for current user');
+          const minimalProfile = await createMinimalProfile(
+            profileId, 
+            currentUser.displayName || 'Unknown User', 
+            currentUser.email || ''
+          );
           
-          if (!postsSnap.empty) {
-            // Get display name from the most recent post
-            const mostRecentPost = postsSnap.docs[0].data();
-            displayName = mostRecentPost.userDisplayName || 'Unknown User';
-          }
-          
-          // Create a minimal profile with the info we have
-          setViewedProfile({
+          const profileData: UserProfile = {
             uid: profileId,
-            email: email,
-            displayName: displayName,
+            email: minimalProfile.email,
+            displayName: minimalProfile.displayName,
             bio: '',
             profileImageUrl: '',
             followersCount: 0,
@@ -179,20 +200,60 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
             likedPosts: [],
             location: undefined,
             sportRatings: {},
-            createdAt: null
-          });
+            createdAt: minimalProfile.createdAt
+          };
           
-          unsubscribePosts();
-        });
+          setViewedProfile(profileData);
+          setBio('');
+          setLoading(false);
+        } else {
+          // For other users, try to get info from their posts
+          const postsQuery = query(
+            collection(db, postsCol()), 
+            where('userId', '==', profileId),
+            orderBy('createdAt', 'desc')
+          );
+          
+          const unsubscribePosts = onSnapshot(postsQuery, (postsSnap) => {
+            let displayName = 'Unknown User';
+            let email = '';
+            
+            if (!postsSnap.empty) {
+              // Get display name from the most recent post
+              const mostRecentPost = postsSnap.docs[0].data();
+              displayName = mostRecentPost.userDisplayName || 'Unknown User';
+            }
+            
+            // Create a minimal profile with the info we have
+            setViewedProfile({
+              uid: profileId,
+              email: email,
+              displayName: displayName,
+              bio: '',
+              profileImageUrl: '',
+              followersCount: 0,
+              followingCount: 0,
+              postsCount: postsSnap.docs.length,
+              followers: [],
+              following: [],
+              likedPosts: [],
+              location: undefined,
+              sportRatings: {},
+              createdAt: null
+            });
+            
+            setLoading(false);
+            unsubscribePosts();
+          });
+        }
       }
-      setLoading(false);
     }, (error) => {
       console.error('Error loading profile:', error);
       setLoading(false);
     });
     
     return unsubscribe;
-  }, [profileId, isOwnProfile]);
+  }, [profileId, isOwnProfile, currentUser]);
   
   // Effect to listen for changes to the currently logged-in user's profile data (for follow status)
   useEffect(() => {
@@ -310,24 +371,43 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       return;
     }
 
-    setFollowLoading(true); // Disable button during operation
-  
+    setFollowLoading(true);
+
     const currentUserRef = doc(db, userDoc(currentUser.uid));
     const targetUserRef = doc(db, userDoc(targetUserId));
     const amFollowing = currentUserProfile.following?.includes(targetUserId);
     
     console.log('Am following:', amFollowing);
-  
+
     try {
       await runTransaction(db, async (transaction) => {
         const currentUserDoc = await transaction.get(currentUserRef);
         const targetUserDoc = await transaction.get(targetUserRef);
         
+        // Ensure current user document exists
+        let currentUserData;
         if (!currentUserDoc.exists()) {
-          throw new Error("Current user document does not exist!");
+          // Create current user document if it doesn't exist
+          currentUserData = {
+            uid: currentUser.uid,
+            email: currentUser.email || '',
+            displayName: currentUser.displayName || 'Unknown User',
+            bio: '',
+            profileImageUrl: '',
+            followersCount: 0,
+            followingCount: 0,
+            postsCount: 0,
+            followers: [],
+            following: [],
+            likedPosts: [],
+            sportRatings: {},
+            createdAt: serverTimestamp(),
+          };
+          transaction.set(currentUserRef, currentUserData);
+        } else {
+          currentUserData = currentUserDoc.data();
         }
         
-        const currentUserData = currentUserDoc.data();
         const targetUserData = targetUserDoc.exists() ? targetUserDoc.data() : null;
         
         // Double-check the current state from the database to prevent race conditions
@@ -386,9 +466,8 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
               followers: [currentUser.uid],
               following: [],
               likedPosts: [],
-              location: undefined,
               sportRatings: {},
-              createdAt: new Date()
+              createdAt: serverTimestamp()
             });
           }
         }
@@ -399,7 +478,7 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
       console.error('Error following/unfollowing user:', error);
       alert('There was an error with the follow operation. Please try again.');
     } finally {
-      setFollowLoading(false); // Re-enable button
+      setFollowLoading(false);
     }
   };
 
@@ -422,7 +501,13 @@ export default function Profile({ currentUser, profileId }: ProfileProps) {
   if (!viewedProfile) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-600">Profile not found</p>
+        <p className="text-gray-600">Unable to load profile</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+        >
+          Try Again
+        </button>
       </div>
     );
   }
